@@ -4,7 +4,7 @@
 
 Authorization in Platformatic DB is **role-based**. User authentication and the
 assignment of roles must be handled by an external authentication service.
-Take a look to at the reference documentation for [Authorization](/docs/reference/db/authorization).
+Take a look to at the reference documentation for [Authorization](/docs/reference/db/authorization/introduction).
 
 The goal of this simple guide is to protect an API built with Platformatic DB
 with the use of a shared secret, that we call `adminSecret`. We want to prevent
@@ -73,7 +73,7 @@ Note that the role of an admin user from `adminSecret` strategy is `platformatic
 
 ## Read-only access to _anonymous_ users
 
-The following configuration will allo all _anonymous_ users (e.g. each user without a known role)
+The following configuration will allow all _anonymous_ users (e.g. each user without a known role)
 to access the `pages` table / `page` entity in Read-only mode:
 
 

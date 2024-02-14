@@ -4,15 +4,13 @@ const camelcase = require('camelcase')
 const {
   toSingular,
   toUpperFirst,
+  toLowerFirst,
   tableName,
   sanitizeLimit
 } = require('./utils')
 const { singularize } = require('inflected')
-
-function lowerCaseFirst (str) {
-  str = str.toString()
-  return str.charAt(0).toLowerCase() + str.slice(1)
-}
+const { findNearestString } = require('@platformatic/utils')
+const errors = require('./errors')
 
 function createMapper (defaultDb, sql, log, table, fields, primaryKeys, relations, queries, autoTimestamp, schema, useSchemaInName, limitConfig, columns, constraintsList) {
   /* istanbul ignore next */ // Ignoring because this won't be fully covered by DB not supporting schemas (SQLite)
@@ -49,7 +47,7 @@ function createMapper (defaultDb, sql, log, table, fields, primaryKeys, relation
         if (fields[key] !== undefined) {
           newKey = key
         } else {
-          throw new Error(`Unknown field ${key}`)
+          throw new errors.UnknownFieldError(key)
         }
       }
       newInput[newKey] = value
@@ -76,7 +74,7 @@ function createMapper (defaultDb, sql, log, table, fields, primaryKeys, relation
   async function save (args) {
     const db = args.tx || defaultDb
     if (args.input === undefined) {
-      throw new Error('Input not provided.')
+      throw new errors.InputNotProvidedError()
     }
     // args.input is not array
     const fieldsToRetrieve = computeFields(args.fields).map((f) => sql.ident(f))
@@ -154,7 +152,7 @@ function createMapper (defaultDb, sql, log, table, fields, primaryKeys, relation
     const db = args.tx || defaultDb
     const fieldsToRetrieve = computeFields(args.fields).map((f) => sql.ident(f))
     if (args.input === undefined) {
-      throw new Error('Input not provided.')
+      throw new errors.InputNotProvidedError()
     }
     const input = fixInput(args.input)
     if (autoTimestamp && fields[autoTimestamp.updatedAt]) {
@@ -199,7 +197,13 @@ function createMapper (defaultDb, sql, log, table, fields, primaryKeys, relation
     gte: '>=',
     lt: '<',
     lte: '<=',
-    like: 'LIKE'
+    like: 'LIKE',
+    ilike: 'ILIKE',
+    any: 'ANY',
+    all: 'ALL',
+    contains: '@>',
+    contained: '<@',
+    overlaps: '&&'
   }
 
   function computeCriteria (opts) {
@@ -217,26 +221,47 @@ function createMapper (defaultDb, sql, log, table, fields, primaryKeys, relation
       }
       const value = where[key]
       const field = inputToFieldMap[key]
+      if (!field) {
+        throw new errors.UnknownFieldError(key)
+      }
       for (const key of Object.keys(value)) {
         const operator = whereMap[key]
         /* istanbul ignore next */
         if (!operator) {
           // This should never happen
-          throw new Error(`Unsupported where clause ${JSON.stringify(where[key])}`)
+          throw new errors.UnsupportedWhereClauseError(JSON.stringify(where[key]))
         }
         const fieldWrap = fields[field]
-        if (operator === '=' && value[key] === null) {
+        /* istanbul ignore next */
+        if (fieldWrap.isArray) {
+          if (operator === 'ANY') {
+            criteria.push(sql`${value[key]} = ANY (${sql.ident(field)})`)
+          } else if (operator === 'ALL') {
+            criteria.push(sql`${value[key]} = ALL (${sql.ident(field)})`)
+          } else if (operator === '@>') {
+            criteria.push(sql`${sql.ident(field)} @> ${value[key]}`)
+          } else if (operator === '<@') {
+            criteria.push(sql`${sql.ident(field)} <@ ${value[key]}`)
+          } else if (operator === '&&') {
+            criteria.push(sql`${sql.ident(field)} && ${value[key]}`)
+          } else {
+            throw new errors.UnsupportedOperatorForArrayFieldError()
+          }
+        } else if (operator === '=' && value[key] === null) {
           criteria.push(sql`${sql.ident(field)} IS NULL`)
         } else if (operator === '<>' && value[key] === null) {
           criteria.push(sql`${sql.ident(field)} IS NOT NULL`)
-        } else if (operator === 'LIKE') {
+        } else if (operator === 'LIKE' || operator === 'ILIKE') {
           let leftHand = sql.ident(field)
           // NOTE: cast fields AS CHAR(64) and TRIM the whitespaces
           // to prevent errors with fields different than VARCHAR & TEXT
           if (!['text', 'varchar'].includes(fieldWrap.sqlType)) {
             leftHand = sql`TRIM(CAST(${sql.ident(field)} AS CHAR(64)))`
           }
-          criteria.push(sql`${leftHand} LIKE ${value[key]}`)
+          const like = operator === 'LIKE' ? sql`LIKE` : queries.hasILIKE ? sql`ILIKE` : sql`LIKE`
+          criteria.push(sql`${leftHand} ${like} ${value[key]}`)
+        } else if (operator === 'ANY' || operator === 'ALL' || operator === '@>' || operator === '<@' || operator === '&&') {
+          throw new errors.UnsupportedOperatorForNonArrayFieldError()
         } else {
           criteria.push(sql`${sql.ident(field)} ${sql.__dangerous__rawValue(operator)} ${computeCriteriaValue(fieldWrap, value[key])}`)
         }
@@ -287,13 +312,14 @@ function createMapper (defaultDb, sql, log, table, fields, primaryKeys, relation
     query = sql`${query} LIMIT ${sanitizeLimit(opts.limit, limitConfig)}`
     if (opts.offset !== undefined) {
       if (opts.offset < 0) {
-        throw new Error(`Param offset=${opts.offset} not allowed. It must be not negative value.`)
+        throw new errors.ParamNotAllowedError(opts.offset)
       }
       query = sql`${query} OFFSET ${opts.offset}`
     }
 
-    const res = await db.query(query)
-    return res.map(fixOutput)
+    const rows = await db.query(query)
+    const res = rows.map(fixOutput)
+    return res
   }
 
   async function count (opts = {}) {
@@ -340,12 +366,21 @@ function createMapper (defaultDb, sql, log, table, fields, primaryKeys, relation
 }
 
 function buildEntity (db, sql, log, table, queries, autoTimestamp, schema, useSchemaInName, ignore, limitConfig, schemaList, columns, constraintsList) {
+  const columnsNames = columns.map(c => c.column_name)
+  for (const ignoredColumn of Object.keys(ignore)) {
+    if (!columnsNames.includes(ignoredColumn)) {
+      const nearestColumn = findNearestString(columnsNames, ignoredColumn)
+      log.warn(`Ignored column "${ignoredColumn}" not found. Did you mean "${nearestColumn}"?`)
+    }
+  }
+
   // Compute the columns
   columns = columns.filter((c) => !ignore[c.column_name])
   const fields = columns.reduce((acc, column) => {
     acc[column.column_name] = {
       sqlType: column.udt_name,
-      isNullable: column.is_nullable === 'YES'
+      isNullable: column.is_nullable === 'YES',
+      isArray: column.isArray
     }
 
     // To get enum values in mysql and mariadb
@@ -387,7 +422,7 @@ function buildEntity (db, sql, log, table, queries, autoTimestamp, schema, useSc
       const validTypes = ['varchar', 'integer', 'uuid', 'serial']
       const pkType = fields[constraint.column_name].sqlType.toLowerCase()
       if (!validTypes.includes(pkType)) {
-        throw new Error(`Invalid Primary Key type: "${pkType}". We support the following: ${validTypes.join(', ')}.`)
+        throw new errors.InvalidPrimaryKeyTypeError(pkType, validTypes.join(', '))
       }
     }
   }
@@ -419,7 +454,7 @@ function buildEntity (db, sql, log, table, queries, autoTimestamp, schema, useSc
       field.foreignKey = true
       const foreignEntityName = singularize(camelcase(useSchemaInName ? camelcase(`${constraint.foreign_table_schema} ${constraint.foreign_table_name}`) : constraint.foreign_table_name))
       const entityName = singularize(camelcase(useSchemaInName ? camelcase(`${constraint.table_schema} ${constraint.table_name}`) : constraint.table_name))
-      const loweredTableWithSchemaName = lowerCaseFirst(useSchemaInName ? camelcase(`${constraint.table_schema} ${camelcase(constraint.table_name)}`) : camelcase(constraint.table_name))
+      const loweredTableWithSchemaName = toLowerFirst(useSchemaInName ? camelcase(`${constraint.table_schema} ${camelcase(constraint.table_name)}`) : camelcase(constraint.table_name))
       constraint.loweredTableWithSchemaName = loweredTableWithSchemaName
       constraint.foreignEntityName = foreignEntityName
       constraint.entityName = entityName

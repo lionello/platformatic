@@ -1,6 +1,8 @@
 #! /usr/bin/env node
 'use strict'
 
+const telemetry = require('@platformatic/telemetry').schema
+const { server } = require('@platformatic/service').schema
 const pkg = require('../package.json')
 const version = 'v' + pkg.version
 const platformaticRuntimeSchema = {
@@ -36,16 +38,20 @@ const platformaticRuntimeSchema = {
               },
               config: {
                 type: 'string'
+              },
+              useHttp: {
+                type: 'boolean'
               }
             }
           }
         }
       }
     },
+    telemetry,
+    server,
     services: {
       type: 'array',
       default: [],
-      minItems: 1,
       items: {
         type: 'object',
         required: ['id', 'path', 'config'],
@@ -59,6 +65,9 @@ const platformaticRuntimeSchema = {
           },
           config: {
             type: 'string'
+          },
+          useHttp: {
+            type: 'boolean'
           }
         }
       }
@@ -67,10 +76,56 @@ const platformaticRuntimeSchema = {
       type: 'string'
     },
     hotReload: {
-      type: 'boolean'
+      anyOf: [
+        {
+          type: 'boolean'
+        },
+        {
+          type: 'string'
+        }
+      ]
     },
     allowCycles: {
       type: 'boolean'
+    },
+    inspectorOptions: {
+      type: 'object',
+      properties: {
+        host: {
+          type: 'string'
+        },
+        port: {
+          type: 'number'
+        },
+        breakFirstLine: {
+          type: 'boolean'
+        },
+        hotReloadDisabled: {
+          type: 'boolean'
+        }
+      }
+    },
+    undici: {
+      agentOptions: {
+        type: 'object',
+        additionalProperties: true
+      },
+      interceptors: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            module: {
+              type: 'string'
+            },
+            options: {
+              type: 'object',
+              additionalProperties: true
+            }
+          },
+          required: ['module', 'options']
+        }
+      }
     },
     $schema: {
       type: 'string'
@@ -91,7 +146,8 @@ const platformaticRuntimeSchema = {
   anyOf: [
     { required: ['autoload', 'entrypoint'] },
     { required: ['services', 'entrypoint'] }
-  ]
+  ],
+  additionalProperties: false
 }
 
 module.exports.schema = platformaticRuntimeSchema

@@ -1,20 +1,16 @@
 'use strict'
 
-const t = require('tap')
+const { clear, connInfo, isSQLite, isMysql } = require('./helper')
+const { deepEqual: same, equal, ok: pass } = require('node:assert/strict')
+const Snap = require('@matteo.collina/snap')
+const { test } = require('node:test')
 const fastify = require('fastify')
 const sqlOpenAPI = require('..')
 const sqlMapper = require('@platformatic/sql-mapper')
-const { clear, connInfo, isSQLite, isMysql } = require('./helper')
-const { resolve } = require('path')
-const { test } = t
 
-Object.defineProperty(t, 'fullname', {
-  value: 'platformatic/db/openapi/updateMany'
-})
+const snap = Snap(__filename)
 
 test('updateMany', async (t) => {
-  const { pass, teardown, same, equal, matchSnapshot } = t
-  t.snapshotFile = resolve(__dirname, 'tap-snapshots', 'updateMany-openapi-1.cjs')
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -48,7 +44,7 @@ test('updateMany', async (t) => {
     }
   })
   app.register(sqlOpenAPI)
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   await app.ready()
 
@@ -58,7 +54,8 @@ test('updateMany', async (t) => {
       url: '/documentation/json'
     })
     const openapi = res.json()
-    matchSnapshot(openapi, 'matches expected OpenAPI defs')
+    const snapshot = await snap(openapi)
+    same(openapi, snapshot)
   }
 
   const posts = [{
@@ -113,21 +110,43 @@ test('updateMany', async (t) => {
   {
     const res = await app.inject({
       method: 'PUT',
+      url: '/posts?where.longText.in=Foo,Bar',
+      body: {
+        longText: 'Updated long text (1)'
+      }
+    })
+    equal(res.statusCode, 200, 'PUT /posts?where.longText.in=Foo,Bar status code')
+    same(res.json(), [{
+      id: 1,
+      title: 'Dog',
+      longText: 'Updated long text (1)',
+      counter: 10
+    }, {
+      id: 2,
+      title: 'Cat',
+      longText: 'Updated long text (1)',
+      counter: 20
+    }], 'PUT /posts?where.longText.in=Foo,Bar response')
+  }
+
+  {
+    const res = await app.inject({
+      method: 'PUT',
       url: '/posts?where.id.in=1,2',
       body: {
-        longText: 'Updated long text'
+        longText: 'Updated long text (2)'
       }
     })
     equal(res.statusCode, 200, 'PUT /posts?where.id.in=1,2 status code')
     same(res.json(), [{
       id: 1,
       title: 'Dog',
-      longText: 'Updated long text',
+      longText: 'Updated long text (2)',
       counter: 10
     }, {
       id: 2,
       title: 'Cat',
-      longText: 'Updated long text',
+      longText: 'Updated long text (2)',
       counter: 20
     }], 'PUT /posts?where.id.in=1,2 response')
   }
@@ -144,7 +163,7 @@ test('updateMany', async (t) => {
     same(res.json(), [{
       id: 2,
       title: 'Kitten',
-      longText: 'Updated long text',
+      longText: 'Updated long text (2)',
       counter: 20
     }], 'PUT /posts?where.counter.gte=2&where.title.eq=Cat response')
   }
@@ -176,12 +195,12 @@ test('updateMany', async (t) => {
     same(res.json(), [{
       id: 1,
       title: 'Best pet friends',
-      longText: 'Updated long text',
+      longText: 'Updated long text (2)',
       counter: 10
     }, {
       id: 2,
       title: 'Best pet friends',
-      longText: 'Updated long text',
+      longText: 'Updated long text (2)',
       counter: 20
     }], 'PUT /posts?where.title.in=Cat,Dog response')
   }

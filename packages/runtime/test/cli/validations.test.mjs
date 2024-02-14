@@ -1,6 +1,7 @@
 import assert from 'node:assert'
 import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
+import { stripVTControlCharacters } from 'node:util'
 import { join } from 'desm'
 import { execa } from 'execa'
 import { cliPath } from './helper.mjs'
@@ -42,11 +43,6 @@ test('print validation errors', async () => {
 
   assert(error)
   assert.strictEqual(error.exitCode, 1)
-  assert.strictEqual(error.stdout, `
-┌─────────┬─────────────┬─────────────────────────────────────────────────────────────────┐
-│ (index) │    path     │                             message                             │
-├─────────┼─────────────┼─────────────────────────────────────────────────────────────────┤
-│    0    │ '/autoload' │ \`must have required property 'path' {"missingProperty":"path"}\` │
-└─────────┴─────────────┴─────────────────────────────────────────────────────────────────┘
-`.trim())
+  assert.strictEqual(stripVTControlCharacters(error.stdout).includes('`must have required property \'path\' {"missingProperty":"path"}`'), true)
+  assert.strictEqual(stripVTControlCharacters(error.stdout).includes('/autoload'), true)
 })

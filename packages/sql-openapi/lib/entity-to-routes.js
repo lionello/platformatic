@@ -1,8 +1,10 @@
 'use strict'
 
 const { mapSQLTypeToOpenAPIType } = require('@platformatic/sql-json-schema-mapper')
+const { findNearestString } = require('@platformatic/utils')
 const camelcase = require('camelcase')
 const { generateArgs, rootEntityRoutes, capitalize, getFieldsForEntity } = require('./shared')
+const errors = require('./errors')
 
 const getEntityLinksForEntity = (app, entity) => {
   const entityLinks = {}
@@ -46,6 +48,24 @@ async function entityPlugin (app, opts) {
   const entitySchema = {
     $ref: entity.name + '#'
   }
+
+  const entitySchemaInput = {
+    $ref: entity.name + 'Input#'
+  }
+
+  const entityFieldsNames = Object.values(entity.fields)
+    .map(field => field.camelcase)
+
+  for (const ignoredField of Object.keys(ignore)) {
+    if (!entityFieldsNames.includes(ignoredField)) {
+      const nearestField = findNearestString(entityFieldsNames, ignoredField)
+      app.log.warn(
+        `Ignored openapi field "${ignoredField}" not found in entity "${entity.singularName}".` +
+        ` Did you mean "${nearestField}"?`
+      )
+    }
+  }
+
   const primaryKey = entity.primaryKeys.values().next().value
   const primaryKeyParams = getPrimaryKeyParams(entity, ignore)
   const primaryKeyCamelcase = camelcase(primaryKey)
@@ -61,12 +81,15 @@ async function entityPlugin (app, opts) {
 
   const fields = getFieldsForEntity(entity, ignore)
 
-  rootEntityRoutes(app, entity, whereArgs, orderByArgs, entityLinks, entitySchema, fields)
+  rootEntityRoutes(app, entity, whereArgs, orderByArgs, entityLinks, entitySchema, fields, entitySchemaInput)
 
   app.get(`/:${primaryKeyCamelcase}`, {
     schema: {
       operationId: `get${entity.name}By${capitalize(primaryKeyCamelcase)}`,
+      summary: `Get ${entity.name} by ${primaryKeyCamelcase}.`,
+      description: `Fetch ${entity.name} using its ${primaryKeyCamelcase} from the database.`,
       params: primaryKeyParams,
+      tags: [entity.table],
       querystring: {
         type: 'object',
         properties: {
@@ -126,7 +149,10 @@ async function entityPlugin (app, opts) {
       app.get(`/:${camelcase(primaryKey)}/${routePathName}`, {
         schema: {
           operationId,
+          summary: `Get ${targetEntity.pluralName} for ${entity.singularName}.`,
+          description: `Fetch all the ${targetEntity.pluralName} for ${entity.singularName} from the database.`,
           params: getPrimaryKeyParams(entity, ignore),
+          tags: [entity.table],
           querystring: {
             type: 'object',
             properties: {
@@ -182,7 +208,7 @@ async function entityPlugin (app, opts) {
     } catch (error) /* istanbul ignore next */ {
       app.log.error(error)
       app.log.info({ routePathName, targetEntityName, targetEntitySchema, operationId })
-      throw new Error('Unable to create the route for the reverse relationship')
+      throw new errors.UnableToCreateTheRouteForTheReverseRelationshipError()
     }
   }
 
@@ -215,7 +241,10 @@ async function entityPlugin (app, opts) {
       app.get(`/:${camelcase(primaryKey)}/${targetRelation}`, {
         schema: {
           operationId,
+          summary: `Get ${targetEntity.singularName} for ${entity.singularName}.`,
+          description: `Fetch the ${targetEntity.singularName} for ${entity.singularName} from the database.`,
           params: getPrimaryKeyParams(entity, ignore),
+          tags: [entity.table],
           querystring: {
             type: 'object',
             properties: {
@@ -264,7 +293,7 @@ async function entityPlugin (app, opts) {
     } catch (error) /* istanbul ignore next */ {
       app.log.error(error)
       app.log.info({ primaryKey, targetRelation, targetEntitySchema, targetEntityName, targetEntity, operationId })
-      throw new Error('Unable to create the route for the PK col relationship')
+      throw new errors.UnableToCreateTheRouteForThePKColRelationshipError()
     }
   }
 
@@ -273,8 +302,11 @@ async function entityPlugin (app, opts) {
     method: 'PUT',
     schema: {
       operationId: 'update' + capitalize(entity.singularName),
-      body: entitySchema,
+      summary: `Update ${entity.singularName}.`,
+      description: `Update ${entity.singularName} in the database.`,
+      body: entitySchemaInput,
       params: primaryKeyParams,
+      tags: [entity.table],
       querystring: {
         type: 'object',
         properties: {
@@ -312,7 +344,10 @@ async function entityPlugin (app, opts) {
   app.delete(`/:${primaryKeyCamelcase}`, {
     schema: {
       operationId: 'delete' + capitalize(entity.pluralName),
+      summary: `Delete ${entity.pluralName}.`,
+      description: `Delete one or more ${entity.pluralName} from the Database.`,
       params: primaryKeyParams,
+      tags: [entity.table],
       querystring: {
         type: 'object',
         properties: {
@@ -348,12 +383,10 @@ function getPrimaryKeyParams (entity, ignore) {
   const properties = {
     [field.camelcase]: { type: mapSQLTypeToOpenAPIType(field.sqlType, ignore) }
   }
-  const required = [field.camelcase]
 
   return {
     type: 'object',
-    properties,
-    required
+    properties
   }
 }
 

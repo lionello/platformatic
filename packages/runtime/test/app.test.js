@@ -3,6 +3,7 @@
 const assert = require('node:assert')
 const { join } = require('node:path')
 const { test } = require('node:test')
+const { utimes } = require('node:fs/promises')
 const { PlatformaticApp } = require('../lib/app')
 const fixturesDir = join(__dirname, '..', 'fixtures')
 const pino = require('pino')
@@ -64,7 +65,7 @@ test('errors when starting an already started application', async (t) => {
   await app.start()
   await assert.rejects(async () => {
     await app.start()
-  }, /application is already started/)
+  }, /Application is already started/)
 })
 
 test('errors when stopping an already stopped application', async (t) => {
@@ -85,11 +86,11 @@ test('errors when stopping an already stopped application', async (t) => {
 
   await assert.rejects(async () => {
     await app.stop()
-  }, /application has not been started/)
+  }, /Application has not been started/)
 })
 
 test('does not restart while restarting', async (t) => {
-  const { logger } = getLoggerAndStream()
+  const { logger, stream } = getLoggerAndStream()
   const appPath = join(fixturesDir, 'monorepo', 'serviceApp')
   const configFile = join(appPath, 'platformatic.service.json')
   const config = {
@@ -104,17 +105,33 @@ test('does not restart while restarting', async (t) => {
   }
   const app = new PlatformaticApp(config, null, logger)
 
-  t.after(app.stop.bind(app))
+  t.after(async () => {
+    try {
+      await app.stop()
+    } catch {}
+  })
   await app.start()
-  t.mock.method(app, 'stop')
   await Promise.all([
     app.restart(),
     app.restart(),
     app.restart()
   ])
+  await app.stop()
+  stream.end()
+  const lines = []
+  for await (const line of stream) {
+    lines.push(line)
+  }
 
-  // stop() should have only been called once despite three restart() calls.
-  assert.strictEqual(app.stop.mock.calls.length, 1)
+  let count = 0
+  for (const line of lines) {
+    // every time we restart we log listening
+    if (line.msg.match(/listening/)) {
+      count++
+    }
+  }
+
+  assert.strictEqual(count, 2)
 })
 
 test('restarts on SIGUSR2', async (t) => {
@@ -227,7 +244,7 @@ test('supports configuration overrides', async (t) => {
 
     await assert.rejects(async () => {
       await app.start()
-    }, /config path must be a string/)
+    }, /Config path must be a string/)
   })
 
   await t.test('ignores invalid config paths', async (t) => {
@@ -250,7 +267,8 @@ test('supports configuration overrides', async (t) => {
     const { logger } = getLoggerAndStream()
     config._configOverrides = new Map([
       ['server.keepAliveTimeout', 1],
-      ['server.port', 0]
+      ['server.port', 0],
+      ['server.pluginTimeout', 99]
     ])
     const app = new PlatformaticApp(config, null, logger)
 
@@ -264,5 +282,123 @@ test('supports configuration overrides', async (t) => {
 
     await app.start()
     assert.strictEqual(app.config.configManager.current.server.keepAliveTimeout, 1)
+    assert.strictEqual(app.config.configManager.current.server.pluginTimeout, 99)
   })
+})
+
+test('restarts on config change without overriding the configManager', async (t) => {
+  const { logger, stream } = getLoggerAndStream()
+  const appPath = join(fixturesDir, 'monorepo', 'serviceApp')
+  const configFile = join(appPath, 'platformatic.service.json')
+  const config = {
+    id: 'serviceApp',
+    config: configFile,
+    path: appPath,
+    entrypoint: true,
+    hotReload: true,
+    dependencies: [],
+    dependents: [],
+    localServiceEnvVars: new Map([['PLT_WITH_LOGGER_URL', ' ']])
+  }
+  const app = new PlatformaticApp(config, null, logger)
+
+  t.after(async function () {
+    try {
+      await app.stop()
+    } catch (err) {
+      console.error(err)
+    }
+  })
+  await app.start()
+  const configManager = app.config.configManager
+  await utimes(configFile, new Date(), new Date())
+  let first = false
+  for await (const log of stream) {
+    // Wait for the server to restart, it will print a line containing "Server listening"
+    if (log.msg.includes('listening')) {
+      if (first) {
+        break
+      }
+      first = true
+    }
+  }
+  assert.strictEqual(configManager, app.server.platformatic.configManager)
+})
+
+test('logs errors if an env variable is missing', async (t) => {
+  const { logger, stream } = getLoggerAndStream()
+  const configFile = join(fixturesDir, 'no-env.service.json')
+  const config = {
+    id: 'no-env',
+    config: configFile,
+    path: fixturesDir,
+    entrypoint: true,
+    hotReload: true
+  }
+  const app = new PlatformaticApp(config, null, logger)
+
+  t.mock.method(process, 'exit', () => {
+    throw new Error('exited')
+  })
+
+  await assert.rejects(async () => {
+    await app.start()
+  }, /exited/)
+  assert.strictEqual(process.exit.mock.calls.length, 1)
+  assert.strictEqual(process.exit.mock.calls[0].arguments[0], 1)
+
+  stream.end()
+  const lines = []
+  for await (const line of stream) {
+    lines.push(line)
+  }
+  const lastLine = lines[lines.length - 1]
+  assert.strictEqual(lastLine.name, 'no-env')
+  assert.strictEqual(lastLine.msg, 'Cannot parse config file. Cannot read properties of undefined (reading \'get\')')
+})
+
+test('Uses the server config if passed', async (t) => {
+  const { logger, stream } = getLoggerAndStream()
+  const appPath = join(fixturesDir, 'server', 'runtime-server', 'services', 'echo')
+  const configFile = join(appPath, 'platformatic.service.json')
+  const config = {
+    id: 'serviceApp',
+    config: configFile,
+    path: appPath,
+    entrypoint: true,
+    hotReload: true,
+    dependencies: [],
+    dependents: [],
+    localServiceEnvVars: new Map([['PLT_WITH_LOGGER_URL', ' ']])
+  }
+  const serverConfig = {
+    hostname: '127.0.0.1',
+    port: '14242',
+    logger: {
+      level: 'info'
+    }
+  }
+  const app = new PlatformaticApp(config, null, logger, null, serverConfig)
+
+  t.after(async function () {
+    try {
+      await app.stop()
+    } catch (err) {
+      console.error(err)
+    }
+  })
+  await app.start()
+  const configManager = app.config.configManager
+  await utimes(configFile, new Date(), new Date())
+  for await (const log of stream) {
+    // Wait for the server to restart, it will print a line containing "Server listening"
+    if (log.msg.includes('listening')) {
+      if (log.msg.includes(serverConfig.port)) {
+        break
+      } else {
+        throw new Error('wrong port')
+      }
+    }
+  }
+  assert.strictEqual(configManager, app.server.platformatic.configManager)
 })

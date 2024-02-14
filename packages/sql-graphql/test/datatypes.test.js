@@ -1,12 +1,13 @@
 'use strict'
 
-const { test } = require('tap')
+const { clear, connInfo, isPg, isMysql, isSQLite } = require('./helper')
+const { test, skip } = require('node:test')
+const { deepEqual: same, equal, ok: pass } = require('node:assert')
 const sqlGraphQL = require('..')
 const sqlMapper = require('@platformatic/sql-mapper')
 const fastify = require('fastify')
-const { clear, connInfo, isPg, isMysql, isSQLite } = require('./helper')
 
-test('[PG] simple db simple graphql schema', { skip: !isPg }, async ({ pass, teardown, same, equal }) => {
+test('[PG] simple db simple graphql schema', { skip: !isPg }, async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -24,7 +25,9 @@ test('[PG] simple db simple graphql schema', { skip: !isPg }, async ({ pass, tea
         long_text TEXT,
         born_at_date DATE,
         born_at_time TIME,
+        born_at_timetz TIME,
         born_at_timestamp TIMESTAMP,
+        born_at_timestamptz TIMESTAMPTZ,
         uuid UUID UNIQUE,
         a_real real,
         a_smallint smallint,
@@ -33,7 +36,7 @@ test('[PG] simple db simple graphql schema', { skip: !isPg }, async ({ pass, tea
       );`)
     }
   })
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   app.register(sqlGraphQL)
 
@@ -54,7 +57,9 @@ test('[PG] simple db simple graphql schema', { skip: !isPg }, async ({ pass, tea
                               longText: "abc",
                               bornAtDate: "2021-11-11",
                               bornAtTime: "12:42:00Z",
+                              bornAtTimetz: "12:42:00Z",
                               bornAtTimestamp: "${timestamp.toISOString()}",
+                              bornAtTimestamptz: "${timestamp.toISOString()}",
                               uuid: "12345678-1234-1234-1234-123456789012",
                               aReal: 1.2,
                               aSmallint: 42,
@@ -67,7 +72,9 @@ test('[PG] simple db simple graphql schema', { skip: !isPg }, async ({ pass, tea
               longText
               bornAtDate
               bornAtTime
+              bornAtTimetz
               bornAtTimestamp
+              bornAtTimestamptz
               uuid
               aReal
               aSmallint
@@ -88,7 +95,9 @@ test('[PG] simple db simple graphql schema', { skip: !isPg }, async ({ pass, tea
           longText: 'abc',
           bornAtDate: '2021-11-11',
           bornAtTime: '12:42:00',
+          bornAtTimetz: '12:42:00',
           bornAtTimestamp: timestamp.toISOString(),
+          bornAtTimestamptz: timestamp.toISOString(),
           uuid: '12345678-1234-1234-1234-123456789012',
           aReal: 1.2,
           aSmallint: 42,
@@ -113,7 +122,9 @@ test('[PG] simple db simple graphql schema', { skip: !isPg }, async ({ pass, tea
               longText
               bornAtDate
               bornAtTime
+              bornAtTimetz
               bornAtTimestamp
+              bornAtTimestamptz
               uuid
               aReal
               aSmallint
@@ -134,7 +145,9 @@ test('[PG] simple db simple graphql schema', { skip: !isPg }, async ({ pass, tea
           longText: 'abc',
           bornAtDate: '2021-11-11',
           bornAtTime: '12:42:00',
+          bornAtTimetz: '12:42:00',
           bornAtTimestamp: timestamp.toISOString(),
+          bornAtTimestamptz: timestamp.toISOString(),
           uuid: '12345678-1234-1234-1234-123456789012',
           aReal: 1.2,
           aSmallint: 42,
@@ -146,7 +159,7 @@ test('[PG] simple db simple graphql schema', { skip: !isPg }, async ({ pass, tea
   }
 })
 
-test('[PG] - UUID', { skip: !isPg }, async ({ pass, teardown, same, equal }) => {
+test('[PG] - UUID', { skip: !isPg }, async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -164,7 +177,7 @@ test('[PG] - UUID', { skip: !isPg }, async ({ pass, teardown, same, equal }) => 
     }
   })
   app.register(sqlGraphQL)
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   await app.ready()
 
@@ -249,7 +262,7 @@ test('[PG] - UUID', { skip: !isPg }, async ({ pass, teardown, same, equal }) => 
   }
 })
 
-test('[MySQL] simple db simple graphql schema', { skip: !isMysql }, async ({ pass, teardown, same, equal }) => {
+test('[MySQL] simple db simple graphql schema', { skip: !isMysql }, async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -277,7 +290,7 @@ test('[MySQL] simple db simple graphql schema', { skip: !isMysql }, async ({ pas
     }
   })
   app.register(sqlGraphQL)
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   await app.ready()
 
@@ -391,7 +404,7 @@ test('[MySQL] simple db simple graphql schema', { skip: !isMysql }, async ({ pas
   }
 })
 
-test('[MySQL] - UUID', { skip: !isMysql }, async ({ pass, teardown, same, equal, skip }) => {
+test('[MySQL] - UUID', { skip: !isMysql }, async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -411,7 +424,7 @@ test('[MySQL] - UUID', { skip: !isMysql }, async ({ pass, teardown, same, equal,
     }
   })
   app.register(sqlGraphQL)
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   await app.ready()
 
@@ -501,7 +514,7 @@ test('[MySQL] - UUID', { skip: !isMysql }, async ({ pass, teardown, same, equal,
   }
 })
 
-test('[SQLite] simple db simple graphql schema', { skip: !isSQLite }, async ({ pass, teardown, same, equal }) => {
+test('[SQLite] simple db simple graphql schema', { skip: !isSQLite }, async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -523,7 +536,7 @@ test('[SQLite] simple db simple graphql schema', { skip: !isSQLite }, async ({ p
       );`)
     }
   })
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   app.register(sqlGraphQL)
 
@@ -620,7 +633,7 @@ test('[SQLite] simple db simple graphql schema', { skip: !isSQLite }, async ({ p
   }
 })
 
-test('[SQLite] - UUID', { skip: !isSQLite }, async ({ pass, teardown, same, equal }) => {
+test('[SQLite] - UUID', { skip: !isSQLite }, async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -638,7 +651,7 @@ test('[SQLite] - UUID', { skip: !isSQLite }, async ({ pass, teardown, same, equa
   })
   app.register(sqlGraphQL)
 
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   await app.ready()
 
@@ -723,7 +736,7 @@ test('[SQLite] - UUID', { skip: !isSQLite }, async ({ pass, teardown, same, equa
   }
 })
 
-test('BIGINT!', { skip: isSQLite }, async ({ pass, teardown, same, equal }) => {
+test('BIGINT!', { skip: isSQLite }, async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -739,7 +752,7 @@ test('BIGINT!', { skip: isSQLite }, async ({ pass, teardown, same, equal }) => {
       );`)
     }
   })
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   app.register(sqlGraphQL)
 

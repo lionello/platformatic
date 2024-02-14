@@ -1,7 +1,8 @@
 import { request, moveToTmpdir } from './helper.js'
-import { test } from 'tap'
+import { test, after } from 'node:test'
+import { equal } from 'node:assert'
+import { match } from '@platformatic/utils'
 import { buildServer } from '@platformatic/db'
-import service from '@platformatic/service'
 import { join } from 'path'
 import * as desm from 'desm'
 import { execa } from 'execa'
@@ -9,9 +10,10 @@ import { promises as fs } from 'fs'
 import split from 'split2'
 import graphql from 'graphql'
 import { copy } from 'fs-extra'
-import dotenv from 'dotenv'
 
-test('graphql client generation (javascript)', async ({ teardown, comment, same, equal, match }) => {
+const env = { ...process.env, NODE_V8_COVERAGE: undefined }
+
+test('graphql client generation (javascript)', async (t) => {
   try {
     await fs.unlink(desm.join(import.meta.url, 'fixtures', 'movies', 'db.sqlite'))
   } catch {
@@ -21,10 +23,10 @@ test('graphql client generation (javascript)', async ({ teardown, comment, same,
 
   await app.start()
 
-  const dir = await moveToTmpdir(teardown)
+  const dir = await moveToTmpdir(after)
 
-  comment(`working in ${dir}`)
-  await execa('node', [desm.join(import.meta.url, '..', 'cli.mjs'), app.url + '/graphql', '--name', 'movies'])
+  t.diagnostic(`working in ${dir}`)
+  await execa('node', [desm.join(import.meta.url, '..', 'cli.mjs'), app.url, '--name', 'movies', '--type', 'graphql'])
 
   const readSDL = await fs.readFile(join(dir, 'movies', 'movies.schema.graphql'), 'utf8')
   {
@@ -33,7 +35,7 @@ test('graphql client generation (javascript)', async ({ teardown, comment, same,
     equal(sdl, readSDL)
   }
 
-  comment(`server at ${app.url}`)
+  t.diagnostic(`server at ${app.url}`)
 
   const toWrite = `
 'use strict'
@@ -44,7 +46,7 @@ const app = Fastify({ logger: true })
 
 app.register(movies, { url: '${app.url}' })
 app.post('/', async (request, reply) => {
-  const res = await app.movies.graphql({
+  const res = await request.movies.graphql({
     query: 'mutation { saveMovie(input: { title: "foo" }) { id, title } }'
   })
   return res
@@ -54,8 +56,8 @@ app.listen({ port: 0 })
   await fs.writeFile(join(dir, 'index.js'), toWrite)
 
   const server2 = execa('node', ['index.js'])
-  teardown(() => server2.kill())
-  teardown(async () => { await app.close() })
+  t.after(() => server2.kill())
+  t.after(async () => { await app.close() })
 
   const stream = server2.stdout.pipe(split(JSON.parse))
 
@@ -77,12 +79,12 @@ app.listen({ port: 0 })
     method: 'POST'
   })
   const body = await res.body.json()
-  match(body, {
+  equal(match(body, {
     title: 'foo'
-  })
+  }), true)
 })
 
-test('graphql client generation (typescript)', async ({ teardown, comment, same, match }) => {
+test('graphql client generation (typescript)', async (t) => {
   try {
     await fs.unlink(desm.join(import.meta.url, 'fixtures', 'movies', 'db.sqlite'))
   } catch {
@@ -92,12 +94,12 @@ test('graphql client generation (typescript)', async ({ teardown, comment, same,
 
   await app.start()
 
-  const dir = await moveToTmpdir(teardown)
+  const dir = await moveToTmpdir(after)
 
-  comment(`working in ${dir}`)
+  t.diagnostic(`working in ${dir}`)
   await execa('node', [desm.join(import.meta.url, '..', 'cli.mjs'), app.url + '/graphql', '--name', 'movies'])
 
-  comment(`upstream URL is ${app.url}`)
+  t.diagnostic(`upstream URL is ${app.url}`)
 
   const toWrite = `
 import Fastify from 'fastify';
@@ -108,8 +110,8 @@ app.register(movies, {
   url: '${app.url}'
 });
 
-app.post('/', async () => {
-  const res = await app.movies.graphql({
+app.post('/', async (req) => {
+  const res = await req.movies.graphql({
     query: 'mutation { saveMovie(input: { title: "foo" }) { id, title } }'
   })
   return res
@@ -125,7 +127,7 @@ app.listen({ port: 0 });
     compilerOptions: {
       outDir: 'build',
       target: 'es2018',
-      moduleResolution: 'node',
+      moduleResolution: 'NodeNext',
       lib: ['es2018']
     }
   }, null, 2)
@@ -133,14 +135,14 @@ app.listen({ port: 0 });
   await fs.writeFile(join(dir, 'tsconfig.json'), tsconfig)
 
   const tsc = desm.join(import.meta.url, '..', 'node_modules', '.bin', 'tsc')
-  await execa(tsc)
+  await execa(tsc, [], { env })
 
   // TODO how can we avoid this copy?
   await copy(join(dir, 'movies'), join(dir, 'build', 'movies'))
 
   const server2 = execa('node', ['build/index.js'])
-  teardown(() => server2.kill())
-  teardown(async () => { await app.close() })
+  t.after(() => server2.kill())
+  t.after(async () => { await app.close() })
 
   const stream = server2.stdout.pipe(split(JSON.parse))
 
@@ -155,17 +157,17 @@ app.listen({ port: 0 });
     url = msg.slice(base.length)
     break
   }
-  comment(`client URL is ${url}`)
+  t.diagnostic(`client URL is ${url}`)
   const res = await request(url, {
     method: 'POST'
   })
   const body = await res.body.json()
-  match(body, {
+  equal(match(body, {
     title: 'foo'
-  })
+  }), true)
 })
 
-test('graphql client generation with relations (typescript)', async ({ teardown, comment, same, match }) => {
+test('graphql client generation with relations (typescript)', async (t) => {
   try {
     await fs.unlink(desm.join(import.meta.url, 'fixtures', 'movies-quotes', 'db.sqlite'))
   } catch {
@@ -175,9 +177,9 @@ test('graphql client generation with relations (typescript)', async ({ teardown,
 
   await app.start()
 
-  const dir = await moveToTmpdir(teardown)
+  const dir = await moveToTmpdir(after)
 
-  comment(`working in ${dir}`)
+  t.diagnostic(`working in ${dir}`)
   await execa('node', [desm.join(import.meta.url, '..', 'cli.mjs'), app.url + '/graphql', '--name', 'movies'])
 
   const toWrite = `
@@ -190,13 +192,13 @@ app.register(movies, {
   url: '${app.url}'
 });
 
-app.post('/', async () => {
-  const res1 = await app.movies.graphql<Movie>({
+app.post('/', async (req) => {
+  const res1 = await req.movies.graphql<Movie>({
     query: \`mutation {
       saveMovie(input: { title: "foo" }) { id, title } }
     \`
   })
-  const res2 = await app.movies.graphql<Quote>({
+  const res2 = await req.movies.graphql<Quote>({
     query: \`
       mutation saveQuote($movieId: ID!) {
         saveQuote(input: { movieId: $movieId, quote: "foo"}) {
@@ -226,7 +228,7 @@ app.listen({ port: 0});
     compilerOptions: {
       outDir: 'build',
       target: 'es2018',
-      moduleResolution: 'node',
+      moduleResolution: 'NodeNext',
       lib: ['es2018']
     }
   }, null, 2)
@@ -234,14 +236,14 @@ app.listen({ port: 0});
   await fs.writeFile(join(dir, 'tsconfig.json'), tsconfig)
 
   const tsc = desm.join(import.meta.url, '..', 'node_modules', '.bin', 'tsc')
-  await execa(tsc)
+  await execa(tsc, [], { env })
 
   // TODO how can we avoid this symlink?
   await copy(join(dir, 'movies'), join(dir, 'build', 'movies'))
 
   const server2 = execa('node', ['build/index.js'])
-  teardown(() => server2.kill())
-  teardown(async () => { await app.close() })
+  t.after(() => server2.kill())
+  t.after(async () => { await app.close() })
 
   const stream = server2.stdout.pipe(split(JSON.parse))
 
@@ -260,15 +262,15 @@ app.listen({ port: 0});
     method: 'POST'
   })
   const body = await res.body.json()
-  match(body, {
+  equal(match(body, {
     quote: 'foo',
     movie: {
       title: 'foo'
     }
-  })
+  }), true)
 })
 
-test('graphql client generation (javascript) with slash at the end of the URL', async ({ teardown, comment, same, match }) => {
+test('graphql client generation (javascript) with slash at the end of the URL', async (t) => {
   try {
     await fs.unlink(desm.join(import.meta.url, 'fixtures', 'movies', 'db.sqlite'))
   } catch {
@@ -278,12 +280,12 @@ test('graphql client generation (javascript) with slash at the end of the URL', 
 
   await app.start()
 
-  const dir = await moveToTmpdir(teardown)
+  const dir = await moveToTmpdir(after)
 
-  comment(`working in ${dir}`)
+  t.diagnostic(`working in ${dir}`)
   await execa('node', [desm.join(import.meta.url, '..', 'cli.mjs'), app.url + '/graphql', '--name', 'movies'])
 
-  comment(`server at ${app.url}`)
+  t.diagnostic(`server at ${app.url}`)
 
   const toWrite = `
 'use strict'
@@ -294,7 +296,7 @@ const app = Fastify({ logger: true })
 
 app.register(movies, { url: '${app.url}/' })
 app.post('/', async (request, reply) => {
-  const res = await app.movies.graphql({
+  const res = await request.movies.graphql({
     query: 'mutation { saveMovie(input: { title: "foo" }) { id, title } }'
   })
   return res
@@ -304,8 +306,8 @@ app.listen({ port: 0 })
   await fs.writeFile(join(dir, 'index.js'), toWrite)
 
   const server2 = execa('node', ['index.js'])
-  teardown(() => server2.kill())
-  teardown(async () => { await app.close() })
+  t.after(() => server2.kill())
+  t.after(async () => { await app.close() })
 
   const stream = server2.stdout.pipe(split(JSON.parse))
 
@@ -324,12 +326,12 @@ app.listen({ port: 0 })
     method: 'POST'
   })
   const body = await res.body.json()
-  match(body, {
+  equal(match(body, {
     title: 'foo'
-  })
+  }), true)
 })
 
-test('adds clients to platformatic service', async ({ teardown, comment, same, match }) => {
+test('configureClient (typescript)', async (t) => {
   try {
     await fs.unlink(desm.join(import.meta.url, 'fixtures', 'movies', 'db.sqlite'))
   } catch {
@@ -339,112 +341,12 @@ test('adds clients to platformatic service', async ({ teardown, comment, same, m
 
   await app.start()
 
-  const dir = await moveToTmpdir(teardown)
+  const dir = await moveToTmpdir(after)
 
-  comment(`working in ${dir}`)
-
-  const pltServiceConfig = {
-    $schema: 'https://platformatic.dev/schemas/v0.18.0/service',
-    server: {
-      hostname: '127.0.0.1',
-      port: 0
-    },
-    plugins: {
-      paths: ['./plugin.js']
-    },
-    watch: false
-  }
-
-  await fs.writeFile('./platformatic.service.json', JSON.stringify(pltServiceConfig, null, 2))
-
-  await fs.writeFile(join(dir, '.env'), 'FOO=bar')
-  await fs.writeFile(join(dir, '.env.sample'), 'FOO=bar')
-
+  t.diagnostic(`working in ${dir}`)
   await execa('node', [desm.join(import.meta.url, '..', 'cli.mjs'), app.url + '/graphql', '--name', 'movies'])
 
-  {
-    const newConfig = JSON.parse(await fs.readFile('./platformatic.service.json', 'utf8'))
-    same(newConfig, {
-      $schema: 'https://platformatic.dev/schemas/v0.18.0/service',
-      server: {
-        hostname: '127.0.0.1',
-        port: 0
-      },
-      plugins: {
-        paths: ['./plugin.js']
-      },
-      clients: [{
-        path: './movies',
-        url: '{PLT_MOVIES_URL}'
-      }],
-      watch: false
-    })
-  }
-
-  comment(`server at ${app.url}`)
-
-  const toWrite = `
-module.exports = async function (app, opts) {
-  app.post('/', async (request, reply) => {
-    const res = await app.movies.graphql({
-      query: 'mutation { saveMovie(input: { title: "foo" }) { id, title } }'
-    })
-    return res
-  })
-}
-`
-  await fs.writeFile(join(dir, 'plugin.js'), toWrite)
-
-  process.env.PLT_MOVIES_URL = app.url
-
-  const app2 = await service.buildServer('./platformatic.service.json')
-
-  await app2.start()
-  teardown(async () => { await app2.close() })
-  teardown(async () => { await app.close() })
-
-  const res = await request(app2.url, {
-    method: 'POST'
-  })
-  const body = await res.body.json()
-  match(body, {
-    title: 'foo'
-  })
-
-  const url = app.url + '/'
-  {
-    const envs = dotenv.parse(await fs.readFile(join(dir, '.env')))
-    same(envs, {
-      FOO: 'bar',
-      PLT_MOVIES_URL: url
-    })
-  }
-
-  {
-    const envs = dotenv.parse(await fs.readFile(join(dir, '.env.sample')))
-    same(envs, {
-      FOO: 'bar',
-      PLT_MOVIES_URL: url
-    })
-  }
-})
-
-test('configureClient (typescript)', async ({ teardown, comment, same, match }) => {
-  try {
-    await fs.unlink(desm.join(import.meta.url, 'fixtures', 'movies', 'db.sqlite'))
-  } catch {
-    // noop
-  }
-  const app = await buildServer(desm.join(import.meta.url, 'fixtures', 'movies', 'zero.db.json'))
-
-  await app.start()
-
-  const dir = await moveToTmpdir(teardown)
-
-  comment(`working in ${dir}`)
-  await execa('node', [desm.join(import.meta.url, '..', 'cli.mjs'), app.url + '/graphql', '--name', 'movies'])
-
-  comment(`upstream URL is ${app.url}`)
+  t.diagnostic(`upstream URL is ${app.url}`)
 
   const toWrite = `
 import Fastify from 'fastify';
@@ -480,7 +382,7 @@ app.listen({ port: 0 });
     compilerOptions: {
       outDir: 'build',
       target: 'es2018',
-      moduleResolution: 'node',
+      moduleResolution: 'NodeNext',
       lib: ['es2018']
     }
   }, null, 2)
@@ -488,14 +390,14 @@ app.listen({ port: 0 });
   await fs.writeFile(join(dir, 'tsconfig.json'), tsconfig)
 
   const tsc = desm.join(import.meta.url, '..', 'node_modules', '.bin', 'tsc')
-  await execa(tsc)
+  await execa(tsc, [], { env })
 
   // TODO how can we avoid this copy?
   await copy(join(dir, 'movies'), join(dir, 'build', 'movies'))
 
   const server2 = execa('node', ['build/index.js'])
-  teardown(() => server2.kill())
-  teardown(async () => { await app.close() })
+  t.after(() => server2.kill())
+  t.after(async () => { await app.close() })
 
   const stream = server2.stdout.pipe(split(JSON.parse))
 
@@ -510,34 +412,17 @@ app.listen({ port: 0 });
     url = msg.slice(base.length)
     break
   }
-  comment(`client URL is ${url}`)
+  t.diagnostic(`client URL is ${url}`)
   const res = await request(url, {
     method: 'POST'
   })
   const body = await res.body.json()
-  match(body, {
+  equal(match(body, {
     title: 'foo'
-  })
+  }), true)
 })
 
-test('graphql client generation errors if the name is not a valid JS identifier', async ({ teardown, comment, rejects }) => {
-  try {
-    await fs.unlink(desm.join(import.meta.url, 'fixtures', 'movies', 'db.sqlite'))
-  } catch {
-    // noop
-  }
-  const app = await buildServer(desm.join(import.meta.url, 'fixtures', 'movies', 'zero.db.json'))
-
-  await app.start()
-  teardown(async () => { await app.close() })
-
-  const dir = await moveToTmpdir(teardown)
-
-  comment(`working in ${dir}`)
-  await rejects(execa('node', [desm.join(import.meta.url, '..', 'cli.mjs'), app.url + '/graphql', '--name', 'movies-foo']))
-})
-
-test('graphql client generation (javascript) from a file', async ({ teardown, comment, same, equal, match }) => {
+test('graphql client generation (javascript) from a file', async (t) => {
   try {
     await fs.unlink(desm.join(import.meta.url, 'fixtures', 'movies', 'db.sqlite'))
   } catch {
@@ -547,8 +432,8 @@ test('graphql client generation (javascript) from a file', async ({ teardown, co
 
   await app.start()
 
-  const dir = await moveToTmpdir(teardown)
-  comment(`working in ${dir}`)
+  const dir = await moveToTmpdir(after)
+  t.diagnostic(`working in ${dir}`)
 
   const sdl = graphql.printSchema(app.graphql.schema)
   const sdlFile = join(dir, 'movies.schema.graphql')
@@ -559,7 +444,7 @@ test('graphql client generation (javascript) from a file', async ({ teardown, co
   const readSDL = await fs.readFile(join(dir, 'movies', 'movies.schema.graphql'), 'utf8')
   equal(sdl, readSDL)
 
-  comment(`server at ${app.url}`)
+  t.diagnostic(`server at ${app.url}`)
 
   const toWrite = `
 'use strict'
@@ -570,7 +455,7 @@ const app = Fastify({ logger: true })
 
 app.register(movies, { url: '${app.url}' })
 app.post('/', async (request, reply) => {
-  const res = await app.movies.graphql({
+  const res = await request.movies.graphql({
     query: 'mutation { saveMovie(input: { title: "foo" }) { id, title } }'
   })
   return res
@@ -580,8 +465,8 @@ app.listen({ port: 0 })
   await fs.writeFile(join(dir, 'index.js'), toWrite)
 
   const server2 = execa('node', ['index.js'])
-  teardown(() => server2.kill())
-  teardown(async () => { await app.close() })
+  t.after(() => server2.kill())
+  t.after(async () => { await app.close() })
 
   const stream = server2.stdout.pipe(split(JSON.parse))
 
@@ -603,7 +488,7 @@ app.listen({ port: 0 })
     method: 'POST'
   })
   const body = await res.body.json()
-  match(body, {
+  equal(match(body, {
     title: 'foo'
-  })
+  }), true)
 })

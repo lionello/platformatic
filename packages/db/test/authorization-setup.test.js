@@ -1,35 +1,41 @@
 'use strict'
 
-const { buildConfig, connInfo, clear, createBasicPages } = require('./helper')
-const { test } = require('tap')
+const assert = require('node:assert/strict')
+const { join } = require('node:path')
+const { test } = require('node:test')
 const { buildServer } = require('..')
-const { request } = require('undici')
+const { buildConfigManager, getConnectionInfo, createBasicPages } = require('./helper')
 
-test('configure authorizations works even with empty object', async ({ teardown, equal, pass, same }) => {
-  const app = await buildServer(buildConfig({
+test('configure authorizations works even with empty object', async (t) => {
+  const { connectionInfo, dropTestDB } = await getConnectionInfo()
+
+  const config = {
     server: {
       hostname: '127.0.0.1',
       port: 0
     },
     authorization: {},
     db: {
-      ...connInfo,
+      ...connectionInfo,
       async onDatabaseLoad (db, sql) {
-        pass('onDatabaseLoad called')
-        await clear(db, sql)
         await createBasicPages(db, sql)
       }
     }
-  }))
+  }
 
-  teardown(async () => {
+  const configManager = await buildConfigManager(config)
+  const app = await buildServer({ configManager })
+
+  t.after(async () => {
     await app.close()
+    await dropTestDB()
   })
   await app.start()
 
   // This must fail because authorization is configured
   {
-    const res = await request(`${app.url}/graphql`, {
+    const res = await app.inject({
+      url: '/graphql',
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -46,9 +52,9 @@ test('configure authorizations works even with empty object', async ({ teardown,
         `
       })
     })
-    equal(res.statusCode, 200, 'savePage status code')
+    assert.equal(res.statusCode, 200, 'savePage status code')
 
-    same(await res.body.json(), {
+    assert.deepEqual(await res.json(), {
       data: {
         savePage: null
       },
@@ -68,4 +74,34 @@ test('configure authorizations works even with empty object', async ({ teardown,
       ]
     }, 'savePage response')
   }
+})
+
+test('addCustomRule', async (t) => {
+  const { connectionInfo, dropTestDB } = await getConnectionInfo()
+
+  const config = {
+    server: {
+      hostname: '127.0.0.1',
+      port: 0
+    },
+    authorization: {},
+    db: {
+      ...connectionInfo,
+      async onDatabaseLoad (db, sql) {
+        await createBasicPages(db, sql)
+      }
+    },
+    plugins: {
+      paths: [join(__dirname, 'fixtures', 'auth-in-code.js')]
+    }
+  }
+
+  const configManager = await buildConfigManager(config)
+  const app = await buildServer({ configManager })
+
+  t.after(async () => {
+    await app.close()
+    await dropTestDB()
+  })
+  await app.start()
 })

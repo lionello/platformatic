@@ -6,10 +6,6 @@ building robust APIs with Node.js.
 For a high level overview of how Platformatic DB works, please reference the
 [Architecture](/getting-started/architecture.md) guide.
 
-:::info
-Platformatic DB is currently in [public beta](#public-beta).
-:::
-
 ## Features
 
 - Command-line interface: [`platformatic db`](/reference/cli.md#db)
@@ -17,7 +13,7 @@ Platformatic DB is currently in [public beta](#public-beta).
 - [Database migrations](/reference/db/migrations.md)
 - REST/OpenAPI
   - Automatic [REST API](/reference/sql-openapi/introduction.md) from your database schema
-  - Interactive documentation ([Swagger UI](https://swagger.io/tools/swagger-ui/))
+  - Interactive documentation ([Scalar](https://docs.scalar.com/swagger-editor))
   - [OpenAPI 3.0](https://swagger.io/resources/open-api/) schema
 - GraphQL
   - Automatic [GraphQL API](/reference/sql-graphql/introduction.md) from your
@@ -33,6 +29,7 @@ Platformatic DB is currently in [public beta](#public-beta).
   - Execute database operations via [mapped entities](/reference/sql-mapper/entities/introduction.md)
   - Write and execute [raw SQL queries](/reference/sql-mapper/introduction.md)
   - Write plugins in JavaScript or [TypeScript](/reference/cli.md#compile)
+  - Automatic generation of types based on the SQL tables
 - Start Platformatic DB [programmatically](/reference/db/programmatic.md) in tests or other applications
 
 :::info
@@ -51,13 +48,10 @@ Get up and running in 2 minutes using our
 
 
 The required database driver is automatically inferred and loaded based on the
-value of the [`connectionString`](/reference/db/configuration.md#core)
+value of the [`connectionString`](/reference/db/configuration.md#db)
 configuration setting.
 
-## Public beta
-
-Platformatic DB is in public beta. You can use it in production, but it's quite
-likely that you'll encounter significant bugs.
+## Issues
 
 If you run into a bug or have a suggestion for improvement, please
 [raise an issue on GitHub](https://github.com/platformatic/platformatic/issues/new). 

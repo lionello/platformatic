@@ -8,6 +8,19 @@ module.exports = async (app, opts) => {
   app.register(fastifyStatic, {
     root: join(__dirname, 'public')
   })
+
+  app.route({
+    method: 'GET',
+    path: '/_platformatic_versions',
+    schema: { hide: true },
+    handler: () => {
+      return {
+        openapi: opts.composer.services.some(s => s.openapi),
+        graphiql: !!(opts.composer.graphql?.graphiql)
+      }
+    }
+  })
+
   // root endpoint
   app.route({
     method: 'GET',
@@ -21,7 +34,7 @@ module.exports = async (app, opts) => {
           return reply.sendFile('./index.html')
         }
       }
-      return { message: 'Welcome to Platformatic! Please visit https://oss.platformatic.dev' }
+      return { message: 'Welcome to Platformatic! Please visit https://docs.platformatic.dev' }
     }
   })
 }

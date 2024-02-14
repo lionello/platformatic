@@ -1,6 +1,7 @@
 'use strict'
 
-const { test } = require('tap')
+const assert = require('node:assert/strict')
+const { test } = require('node:test')
 const { default: OpenAPISchemaValidator } = require('openapi-schema-validator')
 
 const composeOpenApi = require('../../lib/openapi-composer')
@@ -99,12 +100,12 @@ test('should merge two basic apis', async (t) => {
 
   openApiValidator.validate(composedSchema)
 
-  t.equal(composedSchema.openapi, '3.0.0')
+  assert.equal(composedSchema.openapi, '3.0.0')
 
-  t.equal(composedSchema.info.title, 'Platformatic Composer')
-  t.equal(composedSchema.info.version, '1.0.0')
+  assert.equal(composedSchema.info.title, 'Platformatic Composer')
+  assert.equal(composedSchema.info.version, '1.0.0')
 
-  t.same(composedSchema.components.schemas, {
+  assert.deepEqual(composedSchema.components.schemas, {
     api1_Books: {
       type: 'object',
       title: 'Books',
@@ -131,7 +132,7 @@ test('should merge two basic apis', async (t) => {
     }
   })
 
-  t.same(composedSchema.paths['/books'], {
+  assert.deepEqual(composedSchema.paths['/books'], {
     get: {
       operationId: 'api1_getBooks',
       responses: {
@@ -149,7 +150,7 @@ test('should merge two basic apis', async (t) => {
     }
   })
 
-  t.same(composedSchema.paths['/films'], {
+  assert.deepEqual(composedSchema.paths['/films'], {
     get: {
       operationId: 'api2_getFilms',
       responses: {
@@ -253,19 +254,62 @@ test('should merge two basic apis with path prefixes', async (t) => {
     }
   }
 
+  const schema3 = {
+    openapi: '3.0.0',
+    info: {
+      title: 'API 3',
+      version: '1.0.0'
+    },
+    paths: {
+      '/actors': {
+        get: {
+          operationId: 'getActors',
+          responses: {
+            200: {
+              description: 'OK',
+              content: {
+                'application/json': {
+                  schema: {
+                    $ref: '#/components/schemas/Actors'
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    components: {
+      schemas: {
+        Actors: {
+          type: 'object',
+          properties: {
+            id: {
+              type: 'string'
+            },
+            name: {
+              type: 'string'
+            }
+          }
+        }
+      }
+    }
+  }
+
   const composedSchema = composeOpenApi([
     { id: 'api1', prefix: '/api1', schema: schema1 },
-    { id: 'api2', prefix: '/api2', schema: schema2 }
+    { id: 'api-2', prefix: '/api2', schema: schema2 },
+    { id: '-api-3_', prefix: '/api3', schema: schema3 }
   ])
 
   openApiValidator.validate(composedSchema)
 
-  t.equal(composedSchema.openapi, '3.0.0')
+  assert.equal(composedSchema.openapi, '3.0.0')
 
-  t.equal(composedSchema.info.title, 'Platformatic Composer')
-  t.equal(composedSchema.info.version, '1.0.0')
+  assert.equal(composedSchema.info.title, 'Platformatic Composer')
+  assert.equal(composedSchema.info.version, '1.0.0')
 
-  t.same(composedSchema.components.schemas, {
+  assert.deepEqual(composedSchema.components.schemas, {
     api1_Books: {
       type: 'object',
       title: 'Books',
@@ -278,7 +322,7 @@ test('should merge two basic apis with path prefixes', async (t) => {
         }
       }
     },
-    api2_Films: {
+    api_2_Films: {
       type: 'object',
       title: 'Films',
       properties: {
@@ -289,10 +333,22 @@ test('should merge two basic apis with path prefixes', async (t) => {
           type: 'string'
         }
       }
+    },
+    api_3_Actors: {
+      type: 'object',
+      title: 'Actors',
+      properties: {
+        id: {
+          type: 'string'
+        },
+        name: {
+          type: 'string'
+        }
+      }
     }
   })
 
-  t.same(composedSchema.paths['/api1/books'], {
+  assert.deepEqual(composedSchema.paths['/api1/books'], {
     get: {
       operationId: 'api1_getBooks',
       responses: {
@@ -310,16 +366,34 @@ test('should merge two basic apis with path prefixes', async (t) => {
     }
   })
 
-  t.same(composedSchema.paths['/api2/films'], {
+  assert.deepEqual(composedSchema.paths['/api2/films'], {
     get: {
-      operationId: 'api2_getFilms',
+      operationId: 'api_2_getFilms',
       responses: {
         200: {
           description: 'OK',
           content: {
             'application/json': {
               schema: {
-                $ref: '#/components/schemas/api2_Films'
+                $ref: '#/components/schemas/api_2_Films'
+              }
+            }
+          }
+        }
+      }
+    }
+  })
+
+  assert.deepEqual(composedSchema.paths['/api3/actors'], {
+    get: {
+      operationId: 'api_3_getActors',
+      responses: {
+        200: {
+          description: 'OK',
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/api_3_Actors'
               }
             }
           }
@@ -422,12 +496,12 @@ test('should not overwrite a schema title if exists', async (t) => {
 
   openApiValidator.validate(composedSchema)
 
-  t.equal(composedSchema.openapi, '3.0.0')
+  assert.equal(composedSchema.openapi, '3.0.0')
 
-  t.equal(composedSchema.info.title, 'Platformatic Composer')
-  t.equal(composedSchema.info.version, '1.0.0')
+  assert.equal(composedSchema.info.title, 'Platformatic Composer')
+  assert.equal(composedSchema.info.version, '1.0.0')
 
-  t.same(composedSchema.components.schemas, {
+  assert.deepEqual(composedSchema.components.schemas, {
     api1_Books: {
       type: 'object',
       title: 'My Books',
@@ -454,7 +528,7 @@ test('should not overwrite a schema title if exists', async (t) => {
     }
   })
 
-  t.same(composedSchema.paths['/api1/books'], {
+  assert.deepEqual(composedSchema.paths['/api1/books'], {
     get: {
       operationId: 'api1_getBooks',
       responses: {
@@ -472,7 +546,7 @@ test('should not overwrite a schema title if exists', async (t) => {
     }
   })
 
-  t.same(composedSchema.paths['/api2/films'], {
+  assert.deepEqual(composedSchema.paths['/api2/films'], {
     get: {
       operationId: 'api2_getFilms',
       responses: {
@@ -491,7 +565,7 @@ test('should not overwrite a schema title if exists', async (t) => {
   })
 })
 
-test('should trow an error if there are duplicates paths', async (t) => {
+test('should throw an error if there are duplicates paths', async (t) => {
   const schema1 = {
     openapi: '3.0.0',
     info: {
@@ -529,13 +603,13 @@ test('should trow an error if there are duplicates paths', async (t) => {
       { id: 'api1', schema: schema1 },
       { id: 'api2', schema: schema2 }
     ])
-    t.fail('should throw an error')
+    assert.fail('should throw an error')
   } catch (err) {
-    t.equal(err.message, 'Path "/books" already exists')
+    assert.equal(err.message, 'Path "/books" already exists')
   }
 })
 
-test('should trow an error if there are duplicates paths with prefixes', async (t) => {
+test('should throw an error if there are duplicates paths with prefixes', async (t) => {
   const schema1 = {
     openapi: '3.0.0',
     info: {
@@ -573,8 +647,8 @@ test('should trow an error if there are duplicates paths with prefixes', async (
       { id: 'api1', prefix: '/api1', schema: schema1 },
       { id: 'api2', schema: schema2 }
     ])
-    t.fail('should throw an error')
+    assert.fail('should throw an error')
   } catch (err) {
-    t.equal(err.message, 'Path "/api1/books" already exists')
+    assert.equal(err.message, 'Path "/api1/books" already exists')
   }
 })

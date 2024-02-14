@@ -1,52 +1,24 @@
 'use strict'
 
 const clone = require('rfdc')()
+const errors = require('./errors')
 
 function composeOpenApi (apis, options = {}) {
   const mergedPaths = {}
   const mergedSchemas = {}
 
-  for (const { id, prefix, ignore, schema } of apis) {
+  for (const { id, prefix, schema } of apis) {
     const { paths, components } = clone(schema)
 
-    const ignoreMethods = {}
-    for (const ignoreRule of ignore || []) {
-      if (typeof ignoreRule === 'string') {
-        ignoreMethods[ignoreRule] = true
-        continue
-      }
-      if (!ignoreRule.methods) {
-        ignoreMethods[ignoreRule.path] = true
-        continue
-      }
-      ignoreMethods[ignoreRule.path] = ignoreRule.methods.map(
-        (method) => method.toLowerCase()
-      )
-    }
-
-    const apiPrefix = id + '_'
+    const apiPrefix = generateOperationIdApiPrefix(id)
     for (const [path, pathSchema] of Object.entries(paths)) {
-      const pathIgnoreMethods = ignoreMethods[path]
-
-      if (pathIgnoreMethods !== undefined) {
-        if (pathIgnoreMethods === true) continue
-
-        for (let method of Object.keys(pathSchema)) {
-          method = method.toLowerCase()
-          if (pathIgnoreMethods.includes(method)) {
-            delete pathSchema[method]
-          }
-          if (Object.keys(pathSchema).length === 0) continue
-        }
-      }
-
       namespaceSchemaRefs(apiPrefix, pathSchema)
       namespaceSchemaOperationIds(apiPrefix, pathSchema)
 
       const mergedPath = prefix ? prefix + path : path
 
       if (mergedPaths[mergedPath]) {
-        throw new Error('Path "' + mergedPath + '" already exists')
+        throw new errors.PathAlreadyExistsError(mergedPath)
       }
       mergedPaths[mergedPath] = pathSchema
     }
@@ -73,6 +45,12 @@ function composeOpenApi (apis, options = {}) {
     },
     paths: mergedPaths
   }
+}
+
+function generateOperationIdApiPrefix (operationId) {
+  return operationId.trim()
+    .replace(/[^A-Z0-9]+/ig, '_')
+    .replace(/^_+|_+$/g, '') + '_'
 }
 
 function namespaceSchemaRefs (apiPrefix, schema) {

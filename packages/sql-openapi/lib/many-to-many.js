@@ -11,6 +11,10 @@ async function entityPlugin (app, opts) {
   const entitySchema = {
     $ref: entity.name + '#'
   }
+
+  const entitySchemaInput = {
+    $ref: entity.name + 'Input#'
+  }
   const primaryKeysParams = getPrimaryKeysParams(entity)
   const primaryKeysCamelcase = Array.from(entity.primaryKeys).map((key) => camelcase(key))
 
@@ -18,7 +22,7 @@ async function entityPlugin (app, opts) {
 
   const fields = getFieldsForEntity(entity, ignore)
 
-  rootEntityRoutes(app, entity, whereArgs, orderByArgs, undefined, entitySchema, fields)
+  rootEntityRoutes(app, entity, whereArgs, orderByArgs, undefined, entitySchema, fields, entitySchemaInput)
 
   let pathWithParams = ''
 
@@ -42,7 +46,10 @@ async function entityPlugin (app, opts) {
   app.get(pathWithParams, {
     schema: {
       operationId: `get${entity.name}By${operationName}`,
+      summary: `Get ${entity.name} by ${operationName}.`,
+      description: `Fetch ${entity.name} by ${operationName} from the database.`,
       params: primaryKeysParams,
+      tags: [entity.table],
       querystring: {
         type: 'object',
         properties: {
@@ -74,8 +81,11 @@ async function entityPlugin (app, opts) {
       url: pathWithParams,
       method,
       schema: {
-        body: entitySchema,
+        summary: `Update ${entity.name} by ${operationName}.`,
+        description: `Update ${entity.name} by ${operationName} in the database.`,
+        body: entitySchemaInput,
         params: primaryKeysParams,
+        tags: [entity.table],
         querystring: {
           type: 'object',
           properties: {
@@ -116,7 +126,10 @@ async function entityPlugin (app, opts) {
 
   app.delete(pathWithParams, {
     schema: {
+      summary: `Delete ${entity.name} by ${operationName}.`,
+      description: `Delete ${entity.name} by ${operationName} from the database.`,
       params: primaryKeysParams,
+      tags: [entity.table],
       querystring: {
         type: 'object',
         properties: {

@@ -290,10 +290,6 @@ const $defs = {
           $ref: '#/$defs/callbacks-or-reference'
         }
       },
-      deprecated: {
-        default: false,
-        type: 'boolean'
-      },
       security: {
         type: 'array',
         items: {
@@ -344,10 +340,6 @@ const $defs = {
         type: 'string'
       },
       required: {
-        default: false,
-        type: 'boolean'
-      },
-      deprecated: {
         default: false,
         type: 'boolean'
       },
@@ -545,31 +537,11 @@ const $defs = {
   responses: {
     $comment: 'https://spec.openapis.org/oas/v3.1.0#responses-object',
     type: 'object',
-    properties: {
-      default: {
-        $ref: '#/$defs/response-or-reference'
-      }
-    },
-    patternProperties: {
-      '^[1-5](?:[0-9]{2}|XX)$': {
-        $ref: '#/$defs/response-or-reference'
-      }
+    additionalProperties: {
+      $ref: '#/$defs/response-or-reference'
     },
     minProperties: 1,
-    $ref: '#/$defs/specification-extensions',
-
-    if: {
-      $comment: 'either default, or at least one response code property must exist',
-      type: 'object',
-      patternProperties: {
-        '^[1-5](?:[0-9]{2}|XX)$': false
-      }
-    },
-    then: {
-      required: [
-        'default'
-      ]
-    }
+    $ref: '#/$defs/specification-extensions'
   },
   response: {
     $comment: 'https://spec.openapis.org/oas/v3.1.0#response-object',
@@ -729,10 +701,6 @@ const $defs = {
         type: 'string'
       },
       required: {
-        default: false,
-        type: 'boolean'
-      },
-      deprecated: {
         default: false,
         type: 'boolean'
       },

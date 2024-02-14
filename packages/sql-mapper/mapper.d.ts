@@ -1,9 +1,14 @@
 import { FastifyPluginAsync, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { SQL, SQLQuery } from '@databases/sql'
+import { FastifyError } from '@fastify/error'
+import { createCache } from 'async-cache-dedupe'
+
+type cacheOptions = (Parameters<typeof createCache>[0]) | boolean
 
 interface ILogger {
   trace(): any,
-  error(): any
+  error(): any,
+  warn(): any
 }
 
 export interface Database {
@@ -30,7 +35,11 @@ export interface Database {
   /**
    * Dispose the connection. Once this is called, any subsequent queries will fail.
    */
-  dispose(): Promise<void>
+  dispose(): Promise<void>,
+  /**
+   * Begin new transaction
+   */
+  tx<T = any>(fn: (tx: Database) => Promise<T>, options?: any): Promise<T>
 }
 
 export interface DBEntityField {
@@ -73,7 +82,7 @@ export interface WhereCondition {
     /**
      * Greater than value.
      */
-    gr?: any,
+    gt?: any,
     /**
      * Greater than or equal to value.
      */
@@ -98,6 +107,30 @@ export interface WhereCondition {
      * Like value.
      */
     like?: string
+    /**
+     * Like ignore-case value.
+     */
+    ilike?: string,
+    /**
+     * All subquery
+     */
+    all?: string,
+    /**
+     * Any subquery
+     */
+    any?: string
+    /**
+     * Contains values
+     */
+    contains?: any[],
+    /**
+     * Contained by values
+     */
+    contained?: any[],
+    /**
+     * Overlaps with values
+     */
+    overlaps?: any[]
   }
 }
 
@@ -124,8 +157,8 @@ interface Find<EntityFields> {
      */
     offset?: number,
     /**
-     * If present, the entity partecipates in transaction
-    */
+     * If present, the entity participates in transaction
+     */
     tx?: Database
   }): Promise<Partial<EntityFields>[]>
 }
@@ -136,6 +169,10 @@ interface Count {
      * SQL where condition.
      */
     where?: WhereCondition,
+    /**
+     * If present, the entity participates in transaction
+     */
+    tx?: Database
   }): Promise<number>
 }
 
@@ -148,7 +185,11 @@ interface Insert<EntityFields> {
     /**
      * List of fields to be returned for each object
      */
-    fields?: string[]
+    fields?: string[],
+    /**
+     * If present, the entity participates in transaction
+     */
+    tx?: Database
   }): Promise<Partial<EntityFields>[]>
 }
 
@@ -161,7 +202,11 @@ interface Save<EntityFields> {
     /**
      * List of fields to be returned for each object
      */
-    fields?: string[]
+    fields?: string[],
+    /**
+     * If present, the entity participates in transaction
+     */
+    tx?: Database
   }): Promise<Partial<EntityFields>>
 }
 
@@ -170,11 +215,15 @@ interface Delete<EntityFields> {
     /**
      * SQL where condition.
      */
-    where: WhereCondition,
+    where?: WhereCondition,
     /**
      * List of fields to be returned for each object
      */
-    fields: string[]
+    fields?: string[],
+    /**
+     * If present, the entity participates in transaction
+     */
+    tx?: Database
   }): Promise<Partial<EntityFields>[]>,
 }
 
@@ -241,28 +290,69 @@ export interface Entity<EntityFields = any> {
   count: Count,
 }
 
+type EntityHook<T extends (...args: any) => any> = (original: T, ...options: Parameters<T>) => ReturnType<T>;
 
 export interface EntityHooks<EntityFields = any> {
-  find?: Find<EntityFields>,
-  insert?: Insert<EntityFields>,
-  save?: Save<EntityFields>,
-  delete?: Delete<EntityFields>,
-  count?: Count,
+  find?: EntityHook<Find<EntityFields>>,
+  insert?: EntityHook<Insert<EntityFields>>,
+  save?: EntityHook<Save<EntityFields>>,
+  delete?: EntityHook<Delete<EntityFields>>,
+  count?: EntityHook<Count>,
 }
 
-export interface SQLMapperPluginOptions {
+interface BasePoolOptions {
   /**
    * Database connection string.
    */
   connectionString: string,
+
   /**
-   * Set to true to enable auto timestamping for updated_at and inserted_at fields.
+   * The maximum number of connections to create at once. Default is 10.
+   * @default 10
    */
-  autoTimestamp?: boolean,
+  poolSize?: number
+
+  /**
+   * Max milliseconds a client can go unused before it is removed from the pool and destroyed
+   * Default is 30_000ms
+   * @default 30000
+   */
+  idleTimeoutMilliseconds?: number
+
+  /**
+   * Number of milliseconds to wait for a connection from the connection pool before throwing a timeout error
+   * Default is 60_000ms
+   * @default 60000
+   */
+  queueTimeoutMilliseconds?: number
+
+  /**
+   * Number of milliseconds to wait for a lock on a connection/transaction.
+   * Default is 60_000ms
+   * @default 60000
+   */
+  acquireLockTimeoutMilliseconds?: number
+}
+
+export interface CreateConnectionPoolOptions extends BasePoolOptions {
+  /**
+   * A logger object (like [Pino](https://getpino.io))
+   */
+  log: ILogger
+}
+
+export function createConnectionPool(options: CreateConnectionPoolOptions): Promise<{ db: Database, sql: SQL }>
+
+export interface SQLMapperPluginOptions extends BasePoolOptions {
   /**
    * A logger object (like [Pino](https://getpino.io))
    */
   log?: ILogger,
+
+  /**
+   * Set to true to enable auto timestamping for updated_at and inserted_at fields.
+   */
+  autoTimestamp?: boolean,
   /**
    * Database table to ignore when mapping to entities.
    */
@@ -281,13 +371,18 @@ export interface SQLMapperPluginOptions {
    * An async function that is called after the connection is established.
    */
   onDatabaseLoad?(db: Database, sql: SQL): any,
+  /**
+   * Query caching Configuration
+   * @default false
+   */
+  cache?: cacheOptions
 }
 
 export interface Entities {
   [entityName: string]: Entity
 }
 
-export interface SQLMapperPluginInterface {
+export interface SQLMapperPluginInterface<T extends Entities> {
   /**
    * A Database abstraction layer from [@Databases](https://www.atdatabases.org/)
    */
@@ -299,11 +394,16 @@ export interface SQLMapperPluginInterface {
   /**
    * An object containing a key for each table found in the schema, with basic CRUD operations. See [entity.md](./entity.md) for details.
    */
-  entities: Entities,
+  entities: T,
   /**
    * Adds hooks to the entity.
    */
-  addEntityHooks(entityName: string, hooks: EntityHooks): any
+  addEntityHooks<EntityFields>(entityName: string, hooks: EntityHooks<EntityFields>): any
+
+  /**
+   * Clean up all the data in all entities
+   */
+  cleanUpAllEntities(): Promise<void>
 }
 
 export interface PlatformaticContext {
@@ -312,10 +412,6 @@ export interface PlatformaticContext {
 }
 
 declare module 'fastify' {
-  interface FastifyInstance {
-    platformatic: SQLMapperPluginInterface
-  }
-
   interface FastifyRequest {
     platformaticContext: PlatformaticContext
   }
@@ -324,7 +420,7 @@ declare module 'fastify' {
 /**
  * Connects to the database and maps the tables to entities.
  */
-export function connect(options: SQLMapperPluginOptions): Promise<SQLMapperPluginInterface>
+export function connect<T extends Entities>(options: SQLMapperPluginOptions): Promise<SQLMapperPluginInterface<T>>
 /**
  * Fastify plugin that connects to the database and maps the tables to entities.
  */
@@ -337,3 +433,26 @@ export default plugin
 export module utils {
   export function toSingular(str: string): string
 }
+
+/**
+ * All the errors thrown by the plugin.
+ */
+export module errors {
+  export const CannotFindEntityError: (entityName: string) => FastifyError
+  export const SpecifyProtocolError: () => FastifyError
+  export const ConnectionStringRequiredError: () => FastifyError
+  export const TableMustBeAStringError: (table: any) => FastifyError
+  export const UnknownFieldError: (key: string) => FastifyError
+  export const InputNotProvidedError: () => FastifyError
+  export const UnsupportedWhereClauseError: (where: string) => FastifyError
+  export const UnsupportedOperatorForArrayFieldError: () => FastifyError
+  export const UnsupportedOperatorForNonArrayFieldError: () => FastifyError
+  export const ParamNotAllowedError: (offset: string) => FastifyError
+  export const InvalidPrimaryKeyTypeError: (pkType: string, validTypes: string) => FastifyError
+  export const ParamLimitNotAllowedError: (limit: string, max: string) => FastifyError
+  export const ParamLimitMustBeNotNegativeError: (limit: string) => FastifyError
+  export const MissingValueForPrimaryKeyError: (key: string) => FastifyError
+  export const SQLiteOnlySupportsAutoIncrementOnOneColumnError: () => FastifyError
+}
+
+

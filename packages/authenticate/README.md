@@ -1,27 +1,13 @@
 # @platformatic/authenticate
 
-Provides login and invite claiming.
+Generate a Platformatic login api key.
 
-## Usage
-
-Login:
-
-```sh
-plt login
+``` bash
+ $ platformatic deploy
 ```
 
-Login and claim invite:
+Options:
 
-```sh
-plt login --claim some-invite-code
-```
+* `-c, --config FILE` - Specify a path to a global platformatic config file. Defaults to `~/.platformatic/config.json`.
+* `--browser` - Automatically open default browser. Defaults to `false`.
 
-Automatically open default browser:
-
-```sh
-plt login --browser
-```
-
-## License
-
-Apache 2.0

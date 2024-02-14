@@ -54,7 +54,7 @@ Then install again all of the needed packages by running `pnpm i`.
 
 ##### `env: node: No such file or directory` when using `pnpm`
 * get the `pnpm` path with `which pnpm`, then remove it; it's best to use the package manager you installed `pnpm` with
-* verify that the node version in use [is correct](https://oss.platformatic.dev/docs/getting-started/quick-start-guide/#prerequisites)
+* verify that the node version in use [is correct](https://docs.platformatic.dev/docs/getting-started/quick-start-guide/#prerequisites)
 * reinstall it (`npm install pnpm -g`)
 
 </details>
@@ -95,43 +95,9 @@ Read thorough documentation on the [quick start guide](https://github.com/platfo
    }
    ```
 5. In your project directory, use the Platformatic CLI to start your API server: `platformatic db start`
-6. Start interacting with the API by opening the following link on your browser http://127.0.0.1:3042/documentation/static/index.html or you can use curl
+6. Start interacting with the API by opening the following link on your browser http://127.0.0.1:3042/documentation or you can use curl
    to do it. Read the quick start guide to see examples.
 </details>
-
-### Run dashboard development server
-
-Create a `./packages/db-dashboard/.env` file with the following content
-```
-VITE_SERVER_URL=http://localhost:3042
-```
-Or whatever port you are running platformatic DB server on. 
-
-Use the command 
-```sh
-pnpm run dashboard:start
-```
-
-This will start a vite server on port `5173` by default, with watcher and hot-reload (as a standard `vite` application).
-
-Note that GraphiQL will _not_ work because platformatic-db has not been started
-yet.
-
-### Run platformatic-db service
-
-First build the dashboard for production with the command
-```sh
-pnpm run dashboard:build
-```
-
-This will create compressed files and assets under **packages/db-dashboard/build** directory.
-To run the service:
-```sh
-platformatic db
-```
-This will load config from local directory (i.e using config file **platformatic.db.json**).
-
-If you want to use another config file use the option `--config=/path/to/some.json`.
 
 ### Testing
 
@@ -146,8 +112,7 @@ If you want to use another config file use the option `--config=/path/to/some.js
    On Apple Silicon Macs: `docker compose -f docker-compose-apple-silicon.yml up` 
 
    On Windows, execute: `docker-compose up --build`
-1. Run `pnpm run dashboard:build` 
-1. Run tests: `pnpm test`
+2. Run tests: `pnpm test`
 
 If you encounter issues running tests (f.e. failing tests without making a change to the codebase), try to:
 1. Run `pnpm cleanall`
@@ -155,6 +120,14 @@ If you encounter issues running tests (f.e. failing tests without making a chang
 3. Run `pnpm install` again
 
 __Before opening a pull request, please ensure that the tests are passing for the specific project you are working on.__
+
+### Updating the CLI docs
+
+The [cli.md](./docs/reference/cli.md) file is automatically generated through the [gen-cli-doc.mjs](./scripts/gen-cli-doc.mjs) script and you must not manually change it.
+
+To update the CLI docs:
+1. Update/add the txt helpers
+2. run `node scripts/gen-cli-doc.mjs`
 
 ### Releasing
 

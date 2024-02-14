@@ -67,3 +67,32 @@ Multiple plugins can be loaded in parallel by specifying an array:
   }
 }
 ```
+
+## TypeScript and Autocompletion
+
+In order to provide the correct typings of the features added by Platformatic Service to your Fastify instance,
+add the following at the top of your files:
+
+```js
+/// <references types="@platformatic/service" />
+```
+
+### Plugin definition with TypeScript
+
+Here is an example of writing a plugin in TypeScript:
+
+```ts
+/// <reference types="@platformatic/service" />
+import { FastifyInstance, FastifyPluginOptions } from 'fastify'
+
+export default async function (fastify: FastifyInstance, opts: FastifyPluginOptions) {
+}
+```
+
+Note that you need to add the `"typescript": true` configuration to your `platformatic.service.json`.
+
+### Loading compiled files
+
+Setting `"typescript": false` but including a `tsconfig.json` with an [`outDir`](https://www.typescriptlang.org/tsconfig#outDir)
+option, will instruct Platformatic Service to try loading your plugins from that folder instead.
+This setup is needed to support pre-compiled sources to reduce cold start time during deployment.

@@ -1,6 +1,7 @@
 'use strict'
 
 const { tableName } = require('../utils')
+const errors = require('../errors')
 
 /* istanbul ignore file */
 
@@ -22,9 +23,11 @@ async function insertOne (db, sql, table, schema, input, primaryKeysTypes, field
     sql`, `
   )
   const values = sql.join(
-    Object.keys(input).map((key) => sql.value(input[key])),
-    sql`, `
-  )
+    Object.keys(input).map((key) => {
+      const val = input[key]
+      return sql.value(val)
+    }), sql`, `)
+
   const insert = sql`
     INSERT INTO ${tableName(sql, table, schema)} (${keys})
     VALUES (${values})
@@ -69,7 +72,7 @@ function insertPrep (inputs, inputToFieldMap, fields, sql) {
       let newKey = key
       if (inputToFieldMap[key] === undefined) {
         if (fields[key] === undefined) {
-          throw new Error('Unknown field ' + key)
+          throw new errors.UnknownFieldError(key)
         }
       } else {
         newKey = inputToFieldMap[key]
@@ -79,7 +82,7 @@ function insertPrep (inputs, inputToFieldMap, fields, sql) {
 
       let value = input[key] ?? input[newKey]
 
-      if (value && typeof value === 'object' && !(value instanceof Date)) {
+      if (value && !fields[newKey].isArray && typeof value === 'object' && !(value instanceof Date)) {
         // This is a JSON field
         value = JSON.stringify(value)
       }

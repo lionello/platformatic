@@ -1,24 +1,34 @@
-import { resolve, join, dirname, relative, basename, posix, parse } from 'path'
-import { createRequire } from 'module'
+import { resolve, join, relative, basename, posix, parse } from 'path'
 import { mkdir, writeFile, readFile, readdir, unlink } from 'fs/promises'
-import { join as desmJoin } from 'desm'
+import { createRequire } from 'node:module'
 import pino from 'pino'
 import pretty from 'pino-pretty'
 import camelcase from 'camelcase'
 import { mapSQLEntityToJSONSchema, mapOpenAPItoTypes } from '@platformatic/sql-json-schema-mapper'
 import { setupDB, isFileAccessible } from './utils.js'
-import { loadConfig } from '@platformatic/service'
+import { loadConfig } from '@platformatic/config'
 import { platformaticDB } from '../index.js'
+import utils from '@platformatic/utils'
 
-const DEFAULT_TYPES_FOLDER_PATH = resolve(process.cwd(), 'types')
+const checkForDependencies = utils.checkForDependencies
 
 const GLOBAL_TYPES_TEMPLATE = `\
-import { Entity } from '@platformatic/sql-mapper';
+import type { PlatformaticApp, PlatformaticDBMixin, PlatformaticDBConfig, Entity, Entities, EntityHooks } from '@platformatic/db'
 ENTITIES_IMPORTS_PLACEHOLDER
 
-declare module '@platformatic/sql-mapper' {
-  interface Entities {
-    ENTITIES_DEFINITION_PLACEHOLDER
+interface AppEntities extends Entities {
+  ENTITIES_DEFINITION_PLACEHOLDER
+}
+
+interface AppEntityHooks {
+  HOOKS_DEFINITION_PLACEHOLDER
+}
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    platformatic: PlatformaticApp<PlatformaticDBConfig> &
+      PlatformaticDBMixin<AppEntities> &
+      AppEntityHooks
   }
 }
 `
@@ -30,16 +40,14 @@ async function removeUnusedTypeFiles (entities, dir) {
   await Promise.all(removedEntityNames.map((file) => unlink(join(dir, file))))
 }
 
-function getTypesFolderPath (config) {
-  if (config.types?.dir) {
-    return resolve(process.cwd(), config.types.dir)
-  }
-  return DEFAULT_TYPES_FOLDER_PATH
+function getTypesFolderPath (cwd, config) {
+  return resolve(cwd, config.types?.dir ?? 'types')
 }
 
 async function generateEntityType (entity) {
   const jsonSchema = mapSQLEntityToJSONSchema(entity)
-  const tsCode = mapOpenAPItoTypes(jsonSchema)
+  const fieldDefinitions = Object.fromEntries(Object.entries(entity.fields).map(([, value]) => [value.camelcase, value]))
+  const tsCode = mapOpenAPItoTypes(jsonSchema, fieldDefinitions)
   entity.name = camelcase(entity.name).replace(/^\w/, c => c.toUpperCase())
   return tsCode + `\nexport { ${entity.name} };\n`
 }
@@ -49,29 +57,26 @@ async function generateEntityGroupExport (entities) {
   const interfaceRows = []
   for (const name of entities) {
     completeTypesImports.push(`import { ${name} } from './${name}'`)
-    interfaceRows.push(`${name}:${name}`)
+    interfaceRows.push(`${name}: ${name}`)
   }
 
   const content = `${completeTypesImports.join('\n')}
   
-  interface EntityTypes  {
-    ${interfaceRows.join('\n    ')}
-  }
+interface EntityTypes  {
+  ${interfaceRows.join('\n    ')}
+}
   
-  export { EntityTypes ,${entities.join(',')} }`
+export { EntityTypes, ${entities.join(', ')} }`
   return content
 }
 
 async function generateGlobalTypes (entities, config) {
   const globalTypesImports = []
   const globalTypesInterface = []
+  const globalHooks = []
   const completeTypesImports = []
 
-  if (config.db.graphql) {
-    globalTypesImports.push('import graphqlPlugin from \'@platformatic/sql-graphql\'')
-  }
-
-  let typesRelativePath = relative(process.cwd(), getTypesFolderPath(config))
+  let typesRelativePath = relative(process.cwd(), getTypesFolderPath(process.cwd(), config))
   {
     const parsedPath = parse(typesRelativePath)
     typesRelativePath = posix.format(parsedPath)
@@ -81,10 +86,11 @@ async function generateGlobalTypes (entities, config) {
   const names = []
   const keys = Object.keys(entities).sort()
   for (const key of keys) {
-    const { name } = entities[key]
+    const { name, singularName } = entities[key]
     schemaIdTypes.push(name)
     completeTypesImports.push(`import { ${name} } from './${typesRelativePath}/${name}'`)
     globalTypesInterface.push(`${key}: Entity<${name}>,`)
+    globalHooks.push(`addEntityHooks(entityName: '${singularName}', hooks: EntityHooks<${name}>): any`)
     names.push(name)
   }
   globalTypesImports.push(`import { EntityTypes, ${names.join(',')} } from './${typesRelativePath}'`)
@@ -110,78 +116,7 @@ declare module 'fastify' {
   return GLOBAL_TYPES_TEMPLATE
     .replace('ENTITIES_IMPORTS_PLACEHOLDER', globalTypesImports.join('\n'))
     .replace('ENTITIES_DEFINITION_PLACEHOLDER', globalTypesInterface.join('\n    '))
-}
-
-async function generateGlobalTypesFile (entities, config) {
-  const globalTypes = await generateGlobalTypes(entities, config)
-
-  const typesPath = getTypesFolderPath(config)
-  const typesRelativePath = relative(typesPath, process.cwd())
-  const fileNameOrThen = join(typesPath, typesRelativePath, 'global.d.ts')
-
-  await writeFileIfChanged(fileNameOrThen, globalTypes)
-}
-
-async function getDependencyVersion (dependencyName) {
-  const require = createRequire(import.meta.url)
-  const pathToPackageJson = join(dirname(require.resolve(dependencyName)), 'package.json')
-  const packageJsonFile = await readFile(pathToPackageJson, 'utf-8')
-  const packageJson = JSON.parse(packageJsonFile)
-  return packageJson.version
-}
-
-async function getPlatformaticPackageVersion (packageFolderName) {
-  const pathToPackageJson = desmJoin(import.meta.url, '..', '..', packageFolderName, 'package.json')
-  const packageJsonFile = await readFile(pathToPackageJson, 'utf-8')
-  const packageJson = JSON.parse(packageJsonFile)
-  return packageJson.version
-}
-
-function hasDependency (packageJson, dependencyName) {
-  const dependencies = packageJson.dependencies || {}
-  const devDependencies = packageJson.devDependencies || {}
-
-  return dependencies[dependencyName] !== undefined ||
-    devDependencies[dependencyName] !== undefined
-}
-
-async function checkForDependencies (logger, args, config) {
-  const requiredDependencies = {}
-  requiredDependencies.fastify = await getDependencyVersion('fastify')
-  requiredDependencies['@platformatic/sql-mapper'] = await getPlatformaticPackageVersion('sql-mapper')
-
-  if (config.db.graphql) {
-    requiredDependencies['@platformatic/sql-graphql'] = await getPlatformaticPackageVersion('sql-graphql')
-  }
-
-  const packageJsonPath = resolve(process.cwd(), 'package.json')
-  const isPackageJsonExists = await isFileAccessible(packageJsonPath)
-
-  if (isPackageJsonExists) {
-    const packageJsonFile = await readFile(packageJsonPath, 'utf-8')
-    const packageJson = JSON.parse(packageJsonFile)
-
-    let allRequiredDependenciesInstalled = true
-    for (const dependencyName in requiredDependencies) {
-      if (!hasDependency(packageJson, dependencyName)) {
-        allRequiredDependenciesInstalled = false
-        break
-      }
-    }
-
-    if (allRequiredDependenciesInstalled) return
-  }
-
-  let command = 'npm i --save'
-
-  /* c8 ignore next 3 */
-  if (config.plugins?.typescript !== undefined) {
-    command += ' @types/node'
-  }
-  for (const [depName, depVersion] of Object.entries(requiredDependencies)) {
-    command += ` ${depName}@${depVersion}`
-  }
-  logger.warn(`Please run \`${command}\` to install types dependencies.`)
+    .replace('HOOKS_DEFINITION_PLACEHOLDER', globalHooks.join('\n    '))
 }
 
 async function writeFileIfChanged (filename, content) {
@@ -194,11 +129,17 @@ async function writeFileIfChanged (filename, content) {
   return true
 }
 
-async function execute ({ logger, config }) {
+async function execute ({ logger, config, configManager }) {
   const wrap = await setupDB(logger, config.db)
   const { db, entities } = wrap
+  if (Object.keys(entities).length === 0) {
+    // do not generate types if no schema is found
+    return 0
+  }
 
-  const typesFolderPath = getTypesFolderPath(config)
+  const servicePath = configManager.dirname
+  const typesFolderPath = getTypesFolderPath(servicePath, config)
+
   const isTypeFolderExists = await isFileAccessible(typesFolderPath)
   if (isTypeFolderExists) {
     await removeUnusedTypeFiles(entities, typesFolderPath)
@@ -208,7 +149,7 @@ async function execute ({ logger, config }) {
 
   let count = 0
   const entitiesValues = Object.values(entities)
-  const entitiesNames = entitiesValues.map(({ name }) => name)
+  const entitiesNames = entitiesValues.map(({ name }) => name).sort()
   for (const entity of entitiesValues) {
     count++
     const types = await generateEntityType(entity)
@@ -227,7 +168,11 @@ async function execute ({ logger, config }) {
   if (isTypeChanged) {
     logger.info('Regenerating global.d.ts')
   }
-  await generateGlobalTypesFile(entities, config)
+
+  const globalTypes = await generateGlobalTypes(entities, config)
+  const globalTypesFilePath = join(servicePath, 'global.d.ts')
+  await writeFileIfChanged(globalTypesFilePath, globalTypes)
+
   await db.dispose()
   return count
 }
@@ -243,11 +188,12 @@ async function generateTypes (_args) {
   await configManager.parseAndValidate()
   const config = configManager.current
 
-  const count = await execute({ logger, config })
+  const count = await execute({ logger, config, configManager })
   if (count === 0) {
-    logger.warn('No table found. Please run `platformatic db migrations apply` to generate types.')
+    logger.warn('No entities found in your schema. Types were NOT generated.')
+    logger.warn('Please run `platformatic db migrations apply` to generate types.')
   }
-  await checkForDependencies(logger, args, config)
+  await checkForDependencies(logger, args, createRequire(import.meta.url), config, ['@platformatic/db'])
 }
 
-export { execute, generateTypes, generateGlobalTypesFile, checkForDependencies }
+export { execute, generateTypes }

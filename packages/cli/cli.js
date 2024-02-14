@@ -3,10 +3,10 @@
 import commist from 'commist'
 import minimist from 'minimist'
 import { runDB } from '@platformatic/db/db.mjs'
-import { run as runRuntime } from '@platformatic/runtime/runtime.mjs'
+import { run as runRuntime, compile } from '@platformatic/runtime/runtime.mjs'
+import { startCommand } from '@platformatic/runtime'
 import { runService } from '@platformatic/service/service.mjs'
 import { runComposer } from '@platformatic/composer/composer.mjs'
-import platformaticStart from '@platformatic/start'
 import { login } from '@platformatic/authenticate/authenticate.js'
 import { command as client } from '@platformatic/client-cli'
 import { readFile } from 'fs/promises'
@@ -42,10 +42,11 @@ const ensureCommand = async ({ output, help }) => {
 program.register('db', async (args) => ensureCommand(await runDB(args)))
 program.register('runtime', async (args) => ensureCommand(await runRuntime(args)))
 program.register('service', async (args) => ensureCommand(await runService(args)))
-program.register('start', platformaticStart.startCommandInRuntime)
 program.register('composer', async (args) => ensureCommand(await runComposer(args)))
+program.register('start', async (args) => ensureCommand(await startCommand(args)))
 program.register('upgrade', upgrade)
 program.register('client', client)
+program.register('compile', compile)
 program.register('help', help.toStdout)
 program.register('help db', async (args) => runDB(['help', ...args]))
 program.register('help runtime', async (args) => runRuntime(['help', ...args]))
@@ -62,7 +63,7 @@ const args = minimist(process.argv.slice(2), {
   }
 })
 
-if (args.version) {
+if (args.version && !args._.includes('versions')) {
   const version = JSON.parse(await readFile(join(import.meta.url, 'package.json'))).version
   console.log('v' + version)
   process.exit(0)

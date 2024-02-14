@@ -1,16 +1,13 @@
 'use strict'
 
-const t = require('tap')
+const { clear, connInfo, isSQLite, isMariaDB, isPg, isMysql8, isMysql } = require('./helper')
+const { deepEqual: same, equal, ok: pass } = require('node:assert')
+const Snap = require('@matteo.collina/snap')
+const { test } = require('node:test')
 const sqlOpenAPI = require('..')
 const sqlMapper = require('@platformatic/sql-mapper')
 const fastify = require('fastify')
-const { clear, connInfo, isSQLite, isMariaDB, isPg, isMysql8, isMysql } = require('./helper')
-const { resolve } = require('path')
-const { test } = t
-
-Object.defineProperty(t, 'fullname', {
-  value: 'platformatic/db/openapi/simple'
-})
+const yaml = require('yaml')
 
 async function createBasicPages (db, sql) {
   if (isSQLite) {
@@ -31,10 +28,9 @@ async function createBasicPages (db, sql) {
   }
 }
 
-test('simple db, simple rest API', async (t) => {
-  const { pass, teardown, same, equal, matchSnapshot } = t
-  t.snapshotFile = resolve(__dirname, 'tap-snapshots', 'simple-openapi-1.cjs')
+const snap = Snap(__filename)
 
+test('simple db, simple rest API', async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -46,7 +42,7 @@ test('simple db, simple rest API', async (t) => {
     }
   })
   app.register(sqlOpenAPI)
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   await app.ready()
 
@@ -137,7 +133,8 @@ test('simple db, simple rest API', async (t) => {
       url: '/documentation/json'
     })
     const json = res.json()
-    matchSnapshot(json, 'GET /documentation/json response')
+    const snapshot = await snap(json)
+    same(json, snapshot)
   }
 
   {
@@ -187,6 +184,32 @@ test('simple db, simple rest API', async (t) => {
     }, 'GET /pages/1?fields=title,id response')
   }
 })
+test('swagger prefix', async (t) => {
+  const app = fastify()
+  app.register(sqlMapper, {
+    ...connInfo,
+    async onDatabaseLoad (db, sql) {
+      pass('onDatabaseLoad called')
+
+      await clear(db, sql)
+      await createBasicPages(db, sql)
+    }
+  })
+  app.register(sqlOpenAPI, {
+    swaggerPrefix: '/my-prefix'
+  })
+  t.after(() => app.close())
+
+  await app.ready()
+
+  {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/my-prefix/json'
+    })
+    equal(res.json().info.version, '1.0.0', 'GET /my-prefix/json info version default')
+  }
+})
 
 async function createBasicPagesNullable (db, sql) {
   if (isSQLite) {
@@ -208,9 +231,6 @@ async function createBasicPagesNullable (db, sql) {
 }
 
 test('nullable fields', async (t) => {
-  const { pass, teardown, same, equal, matchSnapshot } = t
-  t.snapshotFile = resolve(__dirname, 'tap-snapshots', 'simple-openapi-2.cjs')
-
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -222,7 +242,7 @@ test('nullable fields', async (t) => {
     }
   })
   app.register(sqlOpenAPI)
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   await app.ready()
   {
@@ -247,11 +267,12 @@ test('nullable fields', async (t) => {
       url: '/documentation/json'
     })
     const openapi = res.json()
-    matchSnapshot(openapi, 'GET /documentation/json response')
+    const snapshot = await snap(openapi)
+    same(openapi, snapshot)
   }
 })
 
-test('list', async ({ pass, teardown, same, equal }) => {
+test('list', async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -276,7 +297,7 @@ test('list', async ({ pass, teardown, same, equal }) => {
     }
   })
   app.register(sqlOpenAPI)
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   await app.ready()
 
@@ -308,7 +329,7 @@ test('list', async ({ pass, teardown, same, equal }) => {
     equal(res.statusCode, 200, `${url} status code`)
     equal(res.headers['x-total-count'], undefined, `${url} without x-total-count`)
     same(res.json(), posts.map((p, i) => {
-      return { ...p, id: i + 1 + '' }
+      return { ...p, id: i + 1 }
     }), `${url} response`)
   }
 
@@ -318,7 +339,7 @@ test('list', async ({ pass, teardown, same, equal }) => {
     equal(res.statusCode, 200, `${url} status code`)
     equal(res.headers['x-total-count'], undefined, `${url} without x-total-count`)
     same(res.json(), posts.map((p, i) => {
-      return { ...p, id: i + 1 + '' }
+      return { ...p, id: i + 1 }
     }).slice(0, 3), `${url} response`)
   }
 
@@ -335,7 +356,7 @@ test('list', async ({ pass, teardown, same, equal }) => {
     equal(res.statusCode, 200, `${url} status code`)
     equal(res.headers['x-total-count'], undefined, `${url} without x-total-count`)
     same(res.json(), posts.map((p, i) => {
-      return { ...p, id: i + 1 + '' }
+      return { ...p, id: i + 1 }
     }).slice(2), `${url} response`)
   }
 
@@ -345,7 +366,7 @@ test('list', async ({ pass, teardown, same, equal }) => {
     equal(res.statusCode, 200, `${url} status code`)
     equal(res.headers['x-total-count'], undefined, `${url} without x-total-count`)
     same(res.json(), posts.map((p, i) => {
-      return { ...p, id: i + 1 + '' }
+      return { ...p, id: i + 1 }
     }).slice(1, 3), `${url} response`)
   }
 
@@ -362,7 +383,7 @@ test('list', async ({ pass, teardown, same, equal }) => {
     equal(res.statusCode, 200, `${url} status code`)
     equal(res.headers['x-total-count'], '' + posts.length, `${url} with x-total-count`)
     same(res.json(), posts.map((p, i) => {
-      return { ...p, id: i + 1 + '' }
+      return { ...p, id: i + 1 }
     }).slice(0, 3), `${url} response`)
   }
 
@@ -372,7 +393,7 @@ test('list', async ({ pass, teardown, same, equal }) => {
     equal(res.statusCode, 200, `${url} status code`)
     equal(res.headers['x-total-count'], '' + posts.length, `${url} with x-total-count`)
     same(res.json(), posts.map((p, i) => {
-      return { ...p, id: i + 1 + '' }
+      return { ...p, id: i + 1 }
     }).slice(2), `${url} response`)
   }
 
@@ -382,7 +403,7 @@ test('list', async ({ pass, teardown, same, equal }) => {
     equal(res.statusCode, 200, `${url} status code`)
     equal(res.headers['x-total-count'], '' + posts.length, `${url} with x-total-count`)
     same(res.json(), posts.map((p, i) => {
-      return { ...p, id: i + 1 + '' }
+      return { ...p, id: i + 1 }
     }).slice(1, 3), `${url} response`)
   }
 
@@ -400,7 +421,7 @@ test('list', async ({ pass, teardown, same, equal }) => {
     equal(res.statusCode, 200, `${url} status code`)
     equal(res.headers['x-total-count'], '' + posts.length, `${url} with x-total-count`)
     same(res.json(), posts.map((p, i) => {
-      return { ...p, id: i + 1 + '' }
+      return { ...p, id: i + 1 }
     }).slice(0, 4), `${url} response`)
   }
 
@@ -410,7 +431,7 @@ test('list', async ({ pass, teardown, same, equal }) => {
     equal(res.statusCode, 200, `${url} status code`)
     equal(res.headers['x-total-count'], '' + posts.length, `${url} with x-total-count`)
     same(res.json(), posts.map((p, i) => {
-      return { ...p, id: i + 1 + '' }
+      return { ...p, id: i + 1 }
     }).slice(2, 4), `${url} response`)
   }
 
@@ -441,7 +462,7 @@ test('list', async ({ pass, teardown, same, equal }) => {
     equal(res.statusCode, 200, `${url} status code`)
     equal(res.headers['x-total-count'], '' + posts.length, `${url} with x-total-count`)
     same(res.json(), posts.map((p, i) => {
-      return { ...p, id: i + 1 + '' }
+      return { ...p, id: i + 1 }
     }).slice(10), `${url} response`)
   }
 
@@ -451,12 +472,12 @@ test('list', async ({ pass, teardown, same, equal }) => {
     equal(res.statusCode, 200, `${url} status code`)
     equal(res.headers['x-total-count'], '' + posts.length, `${url} with x-total-count`)
     same(res.json(), posts.map((p, i) => {
-      return { ...p, id: i + 1 + '' }
+      return { ...p, id: i + 1 }
     }).slice(3, 103), `${url} response`)
   }
 })
 
-test('not found', async ({ pass, teardown, same, equal }) => {
+test('not found', async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -469,7 +490,7 @@ test('not found', async ({ pass, teardown, same, equal }) => {
     }
   })
   app.register(sqlOpenAPI)
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   await app.ready()
 
@@ -490,7 +511,7 @@ test('not found', async ({ pass, teardown, same, equal }) => {
   }
 })
 
-test('PUT with an Id', async ({ pass, teardown, same, equal }) => {
+test('PUT with an Id', async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -503,7 +524,7 @@ test('PUT with an Id', async ({ pass, teardown, same, equal }) => {
     }
   })
   app.register(sqlOpenAPI)
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   await app.ready()
 
@@ -523,7 +544,7 @@ test('PUT with an Id', async ({ pass, teardown, same, equal }) => {
   }
 })
 
-test('delete', async ({ pass, teardown, same, equal }) => {
+test('delete', async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -536,7 +557,7 @@ test('delete', async ({ pass, teardown, same, equal }) => {
     }
   })
   app.register(sqlOpenAPI)
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   await app.ready()
 
@@ -605,9 +626,6 @@ test('delete', async ({ pass, teardown, same, equal }) => {
 })
 
 test('simple db, simple rest API', async (t) => {
-  const { pass, teardown, matchSnapshot, equal } = t
-  t.snapshotFile = resolve(__dirname, 'tap-snapshots', 'simple-openapi-3.cjs')
-
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -625,7 +643,7 @@ test('simple db, simple rest API', async (t) => {
       version: '42.42.42'
     }
   })
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   await app.ready()
 
@@ -634,12 +652,20 @@ test('simple db, simple rest API', async (t) => {
     url: '/documentation/json'
   })
   const json = res.json()
-  matchSnapshot(json, 'GET /documentation/json response')
+  const snapshot = await snap(json)
+  same(json, snapshot)
   equal(json.info.version, '42.42.42', 'GET /documentation/json info version override by opts')
+
+  const { body } = await app.inject({
+    method: 'GET',
+    url: '/documentation/yaml'
+  })
+
+  const parsedYaml = yaml.parse(body)
+  equal(parsedYaml.info.version, '42.42.42', 'GET /documentation/yaml info version override by opts')
 })
 
 test('deserialize JSON columns', { skip: isSQLite }, async (t) => {
-  const { pass, teardown, same } = t
   const app = fastify()
   const jsonData = {
     foo: 'bar',
@@ -666,7 +692,7 @@ test('deserialize JSON columns', { skip: isSQLite }, async (t) => {
     }
   })
   app.register(sqlOpenAPI)
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   await app.ready()
 
@@ -683,8 +709,6 @@ test('deserialize JSON columns', { skip: isSQLite }, async (t) => {
 })
 
 test('expose the api with a prefix, if defined', async (t) => {
-  const { pass, teardown, same, equal, matchSnapshot } = t
-
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -696,7 +720,7 @@ test('expose the api with a prefix, if defined', async (t) => {
     }
   })
   app.register(sqlOpenAPI, { prefix: '/api' })
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   await app.ready()
   {
@@ -732,17 +756,17 @@ test('expose the api with a prefix, if defined', async (t) => {
 
   // Check that the documentation is not prefixed
   {
-    t.snapshotFile = resolve(__dirname, 'tap-snapshots', 'simple-openapi-4.cjs')
     const res = await app.inject({
       method: 'GET',
       url: '/documentation/json'
     })
     const json = res.json()
-    matchSnapshot(json, 'GET /documentation/json response')
+    const snapshot = await snap(json)
+    same(json, snapshot)
   }
 })
 
-test('JSON type', { skip: !(isPg || isMysql8) }, async ({ teardown, same, equal, pass }) => {
+test('JSON type', { skip: !(isPg || isMysql8) }, async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -758,7 +782,7 @@ test('JSON type', { skip: !(isPg || isMysql8) }, async ({ teardown, same, equal,
     }
   })
   app.register(sqlOpenAPI)
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   await app.ready()
 
@@ -804,7 +828,7 @@ test('JSON type', { skip: !(isPg || isMysql8) }, async ({ teardown, same, equal,
   }
 })
 
-test('BIGINT', { skip: isSQLite }, async ({ pass, teardown, same, equal }) => {
+test('BIGINT', { skip: isSQLite }, async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -820,7 +844,7 @@ test('BIGINT', { skip: isSQLite }, async ({ pass, teardown, same, equal }) => {
       );`)
     }
   })
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   app.register(sqlOpenAPI)
 
@@ -857,7 +881,7 @@ test('BIGINT', { skip: isSQLite }, async ({ pass, teardown, same, equal }) => {
   }
 })
 
-test('BIGINT as ids', { skip: isSQLite }, async ({ pass, teardown, same, equal }) => {
+test('BIGINT as ids', { skip: isSQLite }, async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -872,7 +896,7 @@ test('BIGINT as ids', { skip: isSQLite }, async ({ pass, teardown, same, equal }
       );`)
     }
   })
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   app.register(sqlOpenAPI)
 

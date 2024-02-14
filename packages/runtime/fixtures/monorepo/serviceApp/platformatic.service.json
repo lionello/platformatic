@@ -14,6 +14,7 @@
   },
   "clients": [
     {
+      "serviceId": "with-logger",
       "path": "./with-logger",
       "url": "{PLT_WITH_LOGGER_URL}"
     }

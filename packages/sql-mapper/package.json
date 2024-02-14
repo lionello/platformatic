@@ -1,16 +1,18 @@
 {
   "name": "@platformatic/sql-mapper",
-  "version": "0.27.0",
+  "version": "1.21.1",
   "description": "A data mapper utility for SQL databases",
   "main": "mapper.js",
+  "types": "mapper.d.ts",
   "scripts": {
     "lint": "standard | snazzy",
-    "test": "standard | snazzy && npm run test:typescript && npm run test:postgresql && npm run test:mariadb && npm run test:mysql && npm run test:mysql8 && npm run test:sqlite",
-    "test:postgresql": "DB=postgresql tap test/*.test.js",
-    "test:mariadb": "DB=mariadb tap test/*.test.js",
-    "test:mysql": "DB=mysql tap test/*.test.js",
-    "test:mysql8": "DB=mysql8 tap test/*.test.js",
-    "test:sqlite": "DB=sqlite tap test/*.test.js",
+    "test": "npm run lint && npm run test:typescript && npm run test:postgresql && npm run test:mariadb && npm run test:mysql && npm run test:mysql8 && npm run test:sqlite",
+    "test:runner": "borp --pattern 'test/**/*.test.{js, mjs}' --concurrency=1 --timeout=60000",
+    "test:postgresql": "DB=postgresql npm run test:runner",
+    "test:mariadb": "DB=mariadb npm run test:runner",
+    "test:mysql": "DB=mysql npm run test:runner",
+    "test:mysql8": "DB=mysql8 npm run test:runner",
+    "test:sqlite": "DB=sqlite npm run test:runner",
     "test:typescript": "tsd"
   },
   "repository": {
@@ -24,19 +26,24 @@
   },
   "homepage": "https://github.com/platformatic/platformatic#readme",
   "devDependencies": {
-    "fastify": "^4.18.0",
+    "@matteo.collina/tspl": "^0.1.1",
+    "borp": "^0.9.0",
+    "fastify": "^4.26.0",
     "snazzy": "^9.0.0",
     "standard": "^17.1.0",
-    "tap": "^16.3.6",
-    "tsd": "^0.28.1"
+    "tsd": "^0.30.4"
   },
   "dependencies": {
-    "@databases/mysql": "^5.2.1",
-    "@databases/pg": "^5.4.1",
+    "@databases/mysql": "^6.0.0",
+    "@databases/pg": "^5.5.0",
     "@databases/sql": "^3.3.0",
-    "@databases/sqlite": "^4.0.2",
+    "@fastify/error": "^3.4.1",
+    "@hapi/topo": "^6.0.2",
+    "@matteo.collina/sqlite-pool": "^0.3.0",
+    "@platformatic/utils": "workspace:*",
+    "async-cache-dedupe": "^2.0.0",
     "camelcase": "^6.3.0",
-    "fastify-plugin": "^4.5.0",
+    "fastify-plugin": "^4.5.1",
     "inflected": "^2.1.0"
   },
   "tsd": {

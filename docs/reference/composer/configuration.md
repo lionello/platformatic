@@ -37,98 +37,23 @@ Configuration settings are organised into the following groups:
 - [`composer`](#composer)
 - [`metrics`](#metrics)
 - [`plugins`](#plugins)
+- [`telemetry`](#telemetry)
+- [`watch`](#watch)
+- [`clients`](#clients)
 
 Sensitive configuration settings containing sensitive data should be set using [configuration placeholders](#configuration-placeholders).
 
 ### `server`
 
-A **required** object with the following settings:
-
-- **`hostname`** (**required**, `string`) — Hostname where Platformatic Composer server will listen for connections.
-- **`port`** (**required**, `number`) — Port where Platformatic Composer server will listen for connections.
-- **`healthCheck`** (`boolean` or `object`) — Enables the health check endpoint.
-  - Powered by [`@fastify/under-pressure`](https://github.com/fastify/under-pressure).
-  - The value can be an object, used to specify the interval between checks in milliseconds (default: `5000`)
-
-  _Example_
-
-  ```json
-  {
-    "server": {
-      ...
-      "healthCheck": {
-        "interval": 2000
-      }
-    }
-  }
-  ```
-- **`cors`** (`object`) — Configuration for Cross-Origin Resource Sharing (CORS) headers.
-  - All options will be passed to the [`@fastify/cors`](https://github.com/fastify/fastify-cors) plugin. In order to specify a `RegExp` object, you can pass `{ regexp: 'yourregexp' }`,
-    it will be automatically converted.
-- **`logger`** (`object`) -- the [logger configuration](https://www.fastify.io/docs/latest/Reference/Server/#logger).
-- **`pluginTimeout`** (`integer`) -- the number of milliseconds to wait for a Fastify plugin to load, see the [fastify docs](https://www.fastify.io/docs/latest/Reference/Server/#plugintimeout) for more details.
-- **`https`** (`object`) - Configuration for HTTPS supporting the following options.
-  - `key` (**required**, `string`, `object`, or `array`) - If `key` is a string, it specifies the private key to be used. If `key` is an object, it must have a `path` property specifying the private key file. Multiple keys are supported by passing an array of keys.
-  - `cert` (**required**, `string`, `object`, or `array`) - If `cert` is a string, it specifies the certificate to be used. If `cert` is an object, it must have a `path` property specifying the certificate file. Multiple certificates are supported by passing an array of keys.
+See [Platformatic Service server](/docs/reference/service/configuration.md#server) for more details.
 
 ### `metrics`
 
-Configuration for a [Prometheus](https://prometheus.io/) server that will export monitoring metrics
-for the current server instance. It uses [`fastify-metrics`](https://github.com/SkeLLLa/fastify-metrics)
-under the hood.
-
-This setting can be a `boolean` or an `object`. If set to `true` the Prometheus server will listen on `http://0.0.0.0:9090`.
-
-Supported object properties:
-
-- **`hostname`** (`string`) — The hostname where Prometheus server will listen for connections.
-- **`port`** (`number`) — The port where Prometheus server will listen for connections.
-- **`auth`** (`object`) — Basic Auth configuration. **`username`** and **`password`** are required here
-  (use [environment variables](#environment-variables)).
+See [Platformatic Service metrics](/docs/reference/service/configuration.md#metrics) for more details.
 
 ### `plugins`
 
-An optional object that defines the plugins loaded by Platformatic Composer.
-- **`paths`** (**required**, `array`): an array of paths (`string`)
-  or an array of objects composed as follows,
-  - `path` (`string`): Relative path to plugin's entry point.
-  - `options` (`object`): Optional plugin options.
-  - `encapsulate` (`boolean`): if the path is a folder, it instruct Platformatic to not encapsulate those plugins.
-  - `maxDepth` (`integer`): if the path is a folder, it limits the depth to load the content from.
-- **`typescript`** (`boolean`): enable typescript compilation. A `tsconfig.json` file is required in the same folder.
-
-  _Example_
-
-  ```json
-  {
-    "plugins": {
-      "paths": [{
-        "path": "./my-plugin.js",
-        "options": {
-          "foo": "bar"
-        }
-      }]
-    }
-  }
-  ```
-
-### `watch`
-
-Disable watching for file changes if set to `false`. It can also be customized with the following options:
-
-- **`ignore`** (`string[]`, default: `null`): List of glob patterns to ignore when watching for changes. If `null` or not specified, ignore rule is not applied. Ignore option doesn't work for typescript files.
-- **`allow`** (`string[]`, default: `['*.js', '**/*.js']`): List of glob patterns to allow when watching for changes. If `null` or not specified, allow rule is not applied. Allow option doesn't work for typescript files.
-
-  _Example_
-
-  ```json
-  {
-    "watch": {
-      "ignore": ["*.mjs", "**/*.mjs"],
-      "allow": ["my-plugin.js", "plugins/*.js"]
-    }
-  }
-  ```
+See [Platformatic Service plugins](/docs/reference/service/configuration.md#plugins) for more details.
 
 ### `composer`
 
@@ -137,20 +62,104 @@ Configure `@platformatic/composer` specific settings such as `services` or `refr
 - **`services`** (`array`, default: `[]`) — is an array of objects that defines
 the services managed by the composer. Each service object supports the following settings:
 
-  - **`id`** (**required**, `string`) - A unique identifier for the service.
-  - **`origin`** (`string`) - A service origin. Skip this option if the service is executing inside of Platformatic Runtime. In this case, service id will be used instead of origin.
-  - **`openapi`** (**required**, `object`) - The configuration file used to compose OpenAPI specification. See the [openapi](#openapi) for details.
+  - **`id`** (**required**, `string`) - A unique identifier for the service. Use a Platformatic Runtime service id if the service is executing inside of [Platformatic Runtime context](/docs/reference/runtime/introduction.md#platformatic-runtime-context).
+  - **`origin`** (`string`) - A service origin. Skip this option if the service is executing inside of [Platformatic Runtime context](/docs/reference/runtime/introduction.md#platformatic-runtime-context). In this case, service id will be used instead of origin.
+  - **`openapi`** (`object`) - The configuration file used to compose OpenAPI specification. See the [openapi](#openapi) for details.
+  - **`graphql`** (`object`) - The configuration for the GraphQL service. See the [graphql](#graphql) for details.
   - **`proxy`** (`object` or `false`) - Service proxy configuration. If `false`, the service proxy is disabled.
     - `prefix` (**required**, `string`) - Service proxy prefix. All service routes will be prefixed with this value.
-  - **`refreshTimeout`** (`number`) - The number of milliseconds to wait for check for changes in the service OpenAPI specification. If not specified, the default value is `1000`.
+
+- **`openapi`** (`object`) - See the Platformatic Service [service](/docs/reference/service/configuration.md#service) openapi option for details.
+- **`graphql`** (`object`) - Has the Platformatic Service [service](/docs/reference/service/configuration.md#service) graphql options, plus
+  
+  - **`addEntitiesResolvers`** (`boolean`) - Automatically add related entities on GraphQL types, following the services entities configuration. See [graphql-composer entities](https://github.com/platformatic/graphql-composer#composer-entities) for details. Default is disabled.
+  - **`defaultArgsAdapter`** (`function` or `string`) - The default `argsAdapter` function for the entities, for example for the platformatic db mapped entities queries
+  ```js
+  graphql: {
+    defaultArgsAdapter: (partialResults) => ({ where: { id: { in: partialResults.map(r => r.id) } } })
+  }
+  ```
+  or with the [metaline](https://github.com/platformatic/metaline) syntax, especially in the case of using the [json configuration](/docs/reference/cli.md#start)
+  ```json
+  "defaultArgsAdapter": "where.id.in.$>#id"
+  ```
+  - **`onSubgraphError`** (`function`) - Hook called when an error occurs getting schema from a subgraph. The arguments are:
+    - `error` (`error`) - The error
+    - `subgraphName` (`string`) - The erroring subgraph
+
+  GraphQL subscriptions are not supported in the composer yet.
+
+- **`refreshTimeout`** (`number`) - The number of milliseconds to wait for check for changes in the services. If not specified, the default value is `1000`; set to `0` to disable.
 
 #### `openapi`
 
 - **`url`** (`string`) - A path of the route that exposes the OpenAPI specification. If a service is a Platformatic Service or Platformatic DB, use `/documentation/json` as a value. Use this or `file` option to specify the OpenAPI specification.
 - **`file`** (`string`) - A path to the OpenAPI specification file. Use this or `url` option to specify the OpenAPI specification.
 - **`prefix`** (`string`) - A prefix for the OpenAPI specification. All service routes will be prefixed with this value.
-- **`ignore`** (`array`) - A list of routes to ignore when composing the OpenAPI specification. Ignored routes will not be available through composed API.
-Example: `["/metrics/{id}", { path: "/payment", methods: ["GET", "POST"] }]`.
+- **`config`** (`string`) - A path to the OpenAPI configuration file. This file is used to customize the OpenAPI specification. See the [openapi-configuration](#openapi-configuration) for details.
+
+##### `openapi-configuration`
+
+The OpenAPI configuration file is a JSON file that is used to customize the OpenAPI specification. It supports the following options:
+
+- **`ignore`** (`boolean`) - If `true`, the route will be ignored by the composer.
+If you want to ignore a specific method, use the `ignore` option in the nested method object.
+
+  _Example_
+
+  ```json
+  {
+    "paths": {
+      "/users": {
+        "ignore": true
+      },
+      "/users/{id}": {
+        "get": { "ignore": true },
+        "put": { "ignore": true }
+      }
+    }
+  }
+  ```
+
+- **alias** (`string`) - Use it create an alias for the route path. Original route path will be ignored.
+
+  _Example_
+
+  ```json
+  {
+    "paths": {
+      "/users": {
+        "alias": "/customers"
+      }
+    }
+  }
+  ```
+
+- **`rename`** (`string`) - Use it to rename composed route response fields.
+Use json schema format to describe the response structure. For now it works only for `200` response.
+
+  _Example_
+
+  ```json
+  {
+    "paths": {
+      "/users": {
+        "responses": {
+            "200": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": { "rename": "user_id" },
+                  "name": { "rename": "first_name" }
+                }
+              }
+            }
+          }
+      }
+    }
+  }
+  ```
 
 _Examples_
 
@@ -206,63 +215,58 @@ _Examples_
   }
   ```
 
+#### `graphql`
+
+- **`host`** (`string`) - service host; if not specified, the `service.origin` is used.
+- **`name`** (`string`) - name to identify the service. If not specified, the `service.origin` is used.
+- **`graphqlEndpoint`** (`string`) - The graphql endpoint path, the default value is the common `'/graphql'`.
+- **`composeEndpoint`** (`string`) - The endpoint to retrieve the introspection query from, default is `'/.well-known/graphql-composition'`. In case the endpoint is not available, a second call with introspection query will be sent to the `graphqlEndpoint`.
+- **`entities`** (`object`) - Configuration object for working with entities in this subgraph, the values are objects with the following schema:
+  - **`resolver`** (`object`) - The resolver to retrieve a list of objects - should return a list - and should accept as a arguments a list of primary keys or foreign keys.
+    - **`name`** (`string`, **required**) - The name of the resolver.
+    - **`argsAdapter (partialResults)`** (`function` or `string`) - The function invoked with a subset of the result of the initial query, where `partialResults` is an array of the parent node. It should return an object to be used as argument for `resolver` query. Can be a function or a [metaline](https://github.com/platformatic/metaline) string.
+  **Default:** if missing, the `defaultArgsAdapter` function will be used; if that is missing too, a [generic one](lib/utils.js#L3) will be used.
+    - **`partialResults`** (`function` or `string`) - The function to adapt the subset of the result to be passed to `argsAdapter` - usually is needed only on resolvers of `fkeys` and `many`. Can be a function or a [metaline](https://github.com/platformatic/metaline) string.
+  - **`pkey`** (`string`, **required**) - The primary key field to identify the entity.
+  - **`fkeys`** (`array of objects`) an array to describe the foreign keys of the entities, for example `fkeys: [{ type: 'Author', field: 'authorId' }]`.
+    - **`type`** (`string`, **required**) - The entity type the foreign key is referred to.
+    - **`field`** (`string`) - The foreign key field.
+    - **`as`** (`string`) - When using `addEntitiesResolvers`, it defines the name of the foreign entity as a field of the current one, as a single type.
+    - **`pkey`** (`string`) - The primary key of the foreign entity.
+    - **`subgraph`** (`string`) - The subgraph name of the foreign entity, where the resolver is located; if missing is intended the self.
+    - **`resolver`** (object) - The resolver definition to query the foreign entity, same structure as `entity.resolver`.
+  - **`many`** (`array of objects`) - Describe a 1-to-many relation - the reverse of the foreign key.
+    - **`type`** (`string`, **required**) - The entity type where the entity is a foreign key.
+    - **`fkey`** (`string`, **required**) - The foreign key field in the referred entity.
+    - **`as`** (`string`, **required**) - When using `addEntitiesResolvers`, it defines the name of the relation as a field of the current one, as a list.
+    - **`pkey`** (`string`) - The primary key of the referred entity.
+    - **`subgraph`** (`string`) - The subgraph name of the referred entity, where the resolver is located; if missing is intended the self.
+    - **`resolver`** (`object`, **required**) - The resolver definition to query the referred entity, same structure as `entity.resolver`.
+
+### `telemetry`
+
+See [Platformatic Service telemetry](/docs/reference/service/configuration.md#telemetry) for more details.
+
+### `watch`
+
+See [Platformatic Service watch](/docs/reference/service/configuration.md#watch) for more details.
+
+### `clients`
+
+See [Platformatic Service clients](/docs/reference/service/configuration.md#clients) for more details.
+
 ## Environment variable placeholders
 
-The value for any configuration setting can be replaced with an environment variable
-by adding a placeholder in the configuration file, for example `{PLT_SERVER_LOGGER_LEVEL}`.
-
-All placeholders in a configuration must be available as an environment variable
-and must meet the [allowed placeholder name](#allowed-placeholder-names) rules.
-
-### Example
-
-```json title="platformatic.service.json"
-{
-  "server": {
-    "port": "{PORT}"
-  }
-}
-```
-
-Platformatic will replace the placeholders in this example with the environment
-variables of the same name.
+See [Environment variable placeholders](/docs/reference/service/configuration.md#environment-variable-placeholders) for more details.
 
 ### Setting environment variables
 
-If a `.env` file exists it will automatically be loaded by Platformatic using
-[`dotenv`](https://github.com/motdotla/dotenv). For example:
-
-```plaintext title=".env"
-PLT_SERVER_LOGGER_LEVEL=info
-PORT=8080
-```
-
-The `.env` file must be located in the same folder as the Platformatic configuration
-file or in the current working directory.
-
-Environment variables can also be set directly on the commmand line, for example:
-
-```bash
-PLT_SERVER_LOGGER_LEVEL=debug npx platformatic composer
-```
+See [Setting environment variables](/docs/reference/service/configuration.md#setting-environment-variables) for more details.
 
 ### Allowed placeholder names
 
-Only placeholder names prefixed with `PLT_`, or that are in this allow list, will be
-dynamically replaced in the configuration file:
+See [Allowed placeholder names](/docs/reference/service/configuration.md#allowed-placeholder-names) for more details.
 
-- `PORT`
+### PLT_ROOT
 
-This restriction is to avoid accidentally exposing system environment variables.
-An error will be raised by Platformatic if it finds a configuration placeholder
-that isn't allowed.
-
-The default allow list can be extended by passing a `--allow-env` CLI option with a
-comma separated list of strings, for example:
-
-```bash
-npx platformatic composer --allow-env=HOST,SERVER_LOGGER_LEVEL
-```
-
-If `--allow-env` is passed as an option to the CLI, it will be merged with the
-default allow list.
+See [PLT_ROOT](/docs/reference/service/configuration.md#plt_root) for more details.

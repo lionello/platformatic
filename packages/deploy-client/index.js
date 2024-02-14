@@ -1,30 +1,55 @@
 'use strict'
 
 const { tmpdir, EOL } = require('os')
-const { join } = require('path')
+const { join, basename } = require('path')
 const { createHash } = require('crypto')
 const { readFile, access, mkdtemp, rm } = require('fs/promises')
+const errors = require('./lib/errors')
 
 const tar = require('tar')
 const { request } = require('undici')
 
 const ConfigManager = require('@platformatic/config')
-const { getConfigType, getApp } = require('@platformatic/start')
-const { loadConfig } = require('@platformatic/service')
-const { platformaticRuntime } = require('@platformatic/runtime')
+const { compile, loadConfig } = require('@platformatic/runtime')
 
 const makePrewarmRequest = require('./lib/prewarm.js')
 
 async function archiveProject (pathToProject, archivePath) {
-  const options = { gzip: false, file: archivePath, cwd: pathToProject }
+  const options = {
+    gzip: false,
+    file: archivePath,
+    cwd: pathToProject,
+    filter: (path, stat) => {
+      if (basename(path) === '.env') {
+        return false
+      }
+      return true
+    }
+  }
   return tar.create(options, ['.'])
 }
 
 class DeployClient {
-  constructor (deployServiceHost, workspaceId, workspaceKey) {
+  constructor ({
+    deployServiceHost,
+    workspaceId,
+    workspaceKey,
+    userApiKey
+  }) {
     this.deployServiceHost = deployServiceHost
     this.workspaceId = workspaceId
-    this.workspaceKey = workspaceKey
+    this.workspaceKey = workspaceKey || null
+    this.userApiKey = userApiKey || null
+
+    this.authHeaders = {
+      'x-platformatic-workspace-id': workspaceId
+    }
+    if (workspaceKey) {
+      this.authHeaders['x-platformatic-api-key'] = workspaceKey
+    }
+    if (userApiKey) {
+      this.authHeaders['x-platformatic-user-api-key'] = userApiKey
+    }
   }
 
   async createBundle (
@@ -39,8 +64,7 @@ class DeployClient {
     const { statusCode, body } = await request(url, {
       method: 'POST',
       headers: {
-        'x-platformatic-workspace-id': this.workspaceId,
-        'x-platformatic-api-key': this.workspaceKey,
+        ...this.authHeaders,
         'content-type': 'application/json',
         'accept-encoding': '*',
         accept: 'application/json'
@@ -58,9 +82,9 @@ class DeployClient {
 
     if (statusCode !== 200) {
       if (statusCode === 401) {
-        throw new Error('Invalid platformatic_workspace_key provided')
+        throw new errors.InvalidPlatformaticWorkspaceKeyError()
       }
-      throw new Error(`Could not create a bundle: ${statusCode}`)
+      throw new errors.CouldNotCreateBundleError(statusCode)
     }
 
     return body.json()
@@ -81,7 +105,7 @@ class DeployClient {
     })
 
     if (statusCode !== 200) {
-      throw new Error(`Failed to upload code archive: ${statusCode}`)
+      throw new errors.FailedToUploadCodeArchiveError(statusCode)
     }
   }
 
@@ -91,8 +115,7 @@ class DeployClient {
     const { statusCode, body } = await request(url, {
       method: 'POST',
       headers: {
-        'x-platformatic-workspace-id': this.workspaceId,
-        'x-platformatic-api-key': this.workspaceKey,
+        ...this.authHeaders,
         'content-type': 'application/json',
         'accept-encoding': '*',
         authorization: `Bearer ${token}`,
@@ -104,9 +127,9 @@ class DeployClient {
 
     if (statusCode !== 200) {
       if (statusCode === 401) {
-        throw new Error('Invalid platformatic_workspace_key provided')
+        throw new errors.InvalidPlatformaticWorkspaceKeyError()
       }
-      throw new Error(`Could not create a deployment: ${statusCode}`)
+      throw new errors.CouldNotCreateDeploymentError(statusCode)
     }
 
     return body.json()
@@ -146,20 +169,15 @@ async function isFileAccessible (path) {
   }
 }
 
-async function checkPlatformaticDependency (logger, projectPath) {
-  const packageJsonPath = join(projectPath, 'package.json')
-  const packageJsonExist = await isFileAccessible(packageJsonPath)
-  if (!packageJsonExist) return
-
-  const packageJsonData = await readFile(packageJsonPath, 'utf8')
-  const packageJson = JSON.parse(packageJsonData)
-
-  const dependencies = packageJson.dependencies
-  if (
-    dependencies !== undefined &&
-    dependencies.platformatic !== undefined
-  ) {
-    logger.warn('Move platformatic dependency to devDependencies to speed up deployment')
+async function _loadConfig (minimistConfig, args) {
+  try {
+    return await loadConfig(minimistConfig, args)
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      throw new errors.MissingConfigFileError()
+    }
+    /* c8 ignore next 2 */
+    throw err
   }
 }
 
@@ -167,6 +185,7 @@ async function deploy ({
   deployServiceHost,
   workspaceId,
   workspaceKey,
+  userApiKey,
   label,
   pathToProject,
   pathToConfig,
@@ -175,17 +194,16 @@ async function deploy ({
   secrets,
   variables,
   githubMetadata,
+  compileTypescript,
   logger
 }) {
   if (!workspaceId) {
     throw new Error('platformatic_workspace_id action param is required')
   }
 
-  if (!workspaceKey) {
-    throw new Error('platformatic_workspace_key action param is required')
+  if (!workspaceKey && !userApiKey) {
+    throw new Error('platformatic workspace key or user api key is required')
   }
-
-  await checkPlatformaticDependency(logger, pathToProject)
 
   if (!pathToConfig) {
     pathToConfig = await ConfigManager.findConfigFile(pathToProject)
@@ -195,24 +213,37 @@ async function deploy ({
   }
 
   const args = ['-c', join(pathToProject, pathToConfig)]
-  const appType = await getConfigType(args, pathToProject)
-  const app = appType === 'runtime' ? platformaticRuntime : getApp(appType)
 
-  const { configManager } = await loadConfig({}, args, app)
+  const { configManager, configType: appType } = await _loadConfig({}, args)
   const config = configManager.current
 
   logger.info(`Found Platformatic config file: ${pathToConfig}`)
 
-  const deployClient = new DeployClient(
+  let compiled = false
+  if (compileTypescript !== false) {
+    try {
+      compiled = await compile(args, logger)
+    } catch (err) {
+      /* c8 ignore next 3 */
+      if (err.code !== 'MODULE_NOT_FOUND') {
+        throw err
+      }
+      logger.trace('TypeScript compiler was not installed, skipping compilation')
+    }
+  }
+
+  const deployClient = new DeployClient({
     deployServiceHost,
     workspaceId,
-    workspaceKey
-  )
+    workspaceKey,
+    userApiKey
+  })
 
   const tmpDir = await mkdtemp(join(tmpdir(), 'plt-deploy-'))
   const bundlePath = join(tmpDir, 'project.tar')
   await archiveProject(pathToProject, bundlePath)
   logger.info('Project has been successfully archived')
+  logger.trace({ bundlePath, tmpdir }, 'Temporary files')
 
   const bundle = await readFile(bundlePath)
   const bundleChecksum = generateMD5Hash(bundle)
@@ -229,7 +260,8 @@ async function deploy ({
   if (isBundleUploaded) {
     logger.info('Bundle has been already uploaded. Skipping upload...')
   } else {
-    logger.info('Uploading bundle to the cloud...')
+    const { default: pretty } = await import('pretty-bytes')
+    logger.info(`Uploading bundle (${pretty(bundleSize)}) to the cloud...`)
     await deployClient.uploadBundle(token, bundleChecksum, bundleSize, bundle)
     logger.info('Bundle has been successfully uploaded')
   }
@@ -239,6 +271,15 @@ async function deploy ({
   const envFilePath = join(pathToProject, pathToEnvFile || '.env')
   const envFileVars = await getEnvFileVariables(envFilePath)
   const mergedEnvVars = { ...envFileVars, ...variables }
+
+  if (compiled) {
+    // By default, the platformatic config uses PLT_TYPESCRIPT to control typescript compilation
+    // therefore, we are setting it to false to avoid running typescript compilation
+    // on the server
+    // TODO(mcollina) we should edit the configuration file on the fly and disable typescript compilation
+    // without relying on the env variable
+    mergedEnvVars.PLT_TYPESCRIPT = 'false'
+  }
 
   const secretsFilePath = join(pathToProject, pathToSecretsFile || '.secrets.env')
   const secretsFromFile = await getEnvFileVariables(secretsFilePath)
@@ -253,7 +294,7 @@ async function deploy ({
     appMetadata.services = services
   }
 
-  const { entryPointUrl } = await deployClient.createDeployment(
+  const { id: deploymentId, entryPointUrl } = await deployClient.createDeployment(
     token,
     label,
     appMetadata,
@@ -265,7 +306,10 @@ async function deploy ({
   await makePrewarmRequest(entryPointUrl, logger)
   logger.info('Application has been successfully started')
 
-  return entryPointUrl
+  return {
+    deploymentId,
+    entryPointUrl
+  }
 }
 
-module.exports = { deploy }
+module.exports = { deploy, errors }

@@ -1,11 +1,12 @@
 'use strict'
+
 const { once } = require('node:events')
 const { dirname } = require('node:path')
 const { FileWatcher } = require('@platformatic/utils')
-const {
-  buildServer,
-  loadConfig
-} = require('./unified-api')
+const debounce = require('debounce')
+const { buildServer } = require('./build-server')
+const { loadConfig } = require('./load-config')
+const errors = require('./errors')
 
 class PlatformaticApp {
   #hotReload
@@ -13,9 +14,13 @@ class PlatformaticApp {
   #restarting
   #started
   #originalWatch
+  #fileWatcher
   #logger
+  #telemetryConfig
+  #serverConfig
+  #debouncedRestart
 
-  constructor (appConfig, loaderPort, logger) {
+  constructor (appConfig, loaderPort, logger, telemetryConfig, serverConfig) {
     this.appConfig = appConfig
     this.config = null
     this.#hotReload = false
@@ -24,7 +29,18 @@ class PlatformaticApp {
     this.server = null
     this.#started = false
     this.#originalWatch = null
-    this.#logger = logger
+    this.#fileWatcher = null
+    this.#logger = logger.child({
+      name: this.appConfig.id
+    })
+    this.#telemetryConfig = telemetryConfig
+    this.#serverConfig = serverConfig
+
+    /* c8 ignore next 4 */
+    this.#debouncedRestart = debounce(() => {
+      this.server.log.info('files changed')
+      this.restart()
+    }, 100) // debounce restart for 100ms
   }
 
   getStatus () {
@@ -36,16 +52,15 @@ class PlatformaticApp {
   }
 
   async restart (force) {
-    if (this.#restarting) {
-      return
-    }
-
-    if (!this.#hotReload && !force) {
+    if (this.#restarting || !this.#started || (!this.#hotReload && !force)) {
       return
     }
 
     this.#restarting = true
-    await this.stop()
+
+    // The CJS cache should not be cleared from the loader because v20 moved
+    // the loader to a different thread with a different CJS cache.
+    clearCjsCache()
 
     /* c8 ignore next 4 - tests may not pass in a MessagePort. */
     if (this.#loaderPort) {
@@ -53,48 +68,68 @@ class PlatformaticApp {
       await once(this.#loaderPort, 'message')
     }
 
-    await this.start()
+    try {
+      await this.config.configManager.parseAndValidate()
+      this.#setuplogger(this.config.configManager)
+      await this.server.restart()
+    } catch (err) {
+      this.#logAndExit(err)
+    }
+
     this.#restarting = false
   }
 
   async start () {
     if (this.#started) {
-      throw new Error('application is already started')
+      throw new errors.ApplicationAlreadyStartedError()
     }
 
+    this.#started = true
+
     await this.#initializeConfig()
+    this.#originalWatch = this.config.configManager.current.watch
+    this.config.configManager.current.watch = { enabled: false }
+
     const { configManager } = this.config
+    configManager.update({
+      ...configManager.current,
+      telemetry: this.#telemetryConfig
+    })
+
+    if (this.#serverConfig) {
+      configManager.update({
+        ...configManager.current,
+        server: this.#serverConfig
+      })
+    }
+
     const config = configManager.current
 
-    this.#originalWatch = config.watch
-    config.watch = false
     this.#setuplogger(configManager)
 
     try {
       // If this is a restart, have the fastify server restart itself. If this
       // is not a restart, then create a new server.
-      if (this.#restarting) {
-        await this.server.restart()
-      } else {
-        this.server = await buildServer({
-          ...config,
-          configManager
-        })
-      }
+      this.server = await buildServer({
+        app: this.config.app,
+        ...config,
+        configManager
+      })
     } catch (err) {
       this.#logAndExit(err)
     }
 
-    this.server.platformatic.configManager = configManager
-    this.server.platformatic.config = config
-
-    if (config.plugins !== undefined && this.#originalWatch !== false) {
+    if (
+      (
+        config.plugins !== undefined ||
+        config.versions !== undefined
+      ) &&
+      this.#originalWatch?.enabled !== false
+    ) {
       this.#startFileWatching()
     }
 
-    this.#started = true
-
-    if (this.appConfig.entrypoint && !this.#restarting) {
+    if (this.appConfig.entrypoint || this.appConfig.useHttp) {
       try {
         await this.server.start()
         /* c8 ignore next 5 */
@@ -102,23 +137,25 @@ class PlatformaticApp {
         this.server.log.error({ err })
         process.exit(1)
       }
+    } else {
+      // Make sure the server has run all the onReady hooks before returning.
+      await this.server.ready()
     }
   }
 
   async stop () {
     if (!this.#started) {
-      throw new Error('application has not been started')
-    }
-
-    if (!this.#restarting) {
-      await this.server.close()
+      throw new errors.ApplicationNotStartedError()
     }
 
     await this.#stopFileWatching()
+    await this.server.close()
+
     this.#started = false
   }
 
   async handleProcessLevelEvent ({ signal, err }) {
+    /* c8 ignore next 3 */
     if (!this.server) {
       return false
     }
@@ -142,56 +179,54 @@ class PlatformaticApp {
 
     if (this.#started) {
       await this.stop()
+      this.server.log.info('server stopped')
     }
   }
 
   async #initializeConfig () {
     const appConfig = this.appConfig
 
-    this.config = await loadConfig({}, ['-c', appConfig.config], null, {
-      watch: true,
-      onMissingEnv (key) {
-        return appConfig.localServiceEnvVars.get(key)
-      }
-    })
+    let _config
+    try {
+      _config = await loadConfig({}, ['-c', appConfig.config], {
+        onMissingEnv (key) {
+          return appConfig.localServiceEnvVars.get(key)
+        }
+      })
+    } catch (err) {
+      this.#logAndExit(err)
+    }
+
+    this.config = _config
     const { configManager } = this.config
 
-    if (appConfig._configOverrides instanceof Map) {
-      try {
+    function applyOverrides () {
+      if (appConfig._configOverrides instanceof Map) {
         appConfig._configOverrides.forEach((value, key) => {
           if (typeof key !== 'string') {
-            throw new Error('config path must be a string.')
+            throw new errors.ConfigPathMustBeStringError()
           }
 
           const parts = key.split('.')
           let next = configManager.current
           let obj
+          let i
 
-          for (let i = 0; next !== undefined && i < parts.length; ++i) {
+          for (i = 0; next !== undefined && i < parts.length; ++i) {
             obj = next
             next = obj[parts[i]]
           }
 
-          if (next !== undefined) {
+          if (i === parts.length) {
             obj[parts.at(-1)] = value
           }
         })
-      } catch (err) {
-        configManager.stopWatching()
-        throw err
       }
     }
 
-    this.#setuplogger(configManager)
-    this.#hotReload = this.appConfig.hotReload
+    applyOverrides()
 
-    configManager.on('update', async (newConfig) => {
-      /* c8 ignore next 4 */
-      this.server.platformatic.config = newConfig
-      this.server.log.debug('config changed')
-      this.server.log.trace({ newConfig }, 'new config')
-      await this.restart()
-    })
+    this.#hotReload = this.appConfig.hotReload
 
     configManager.on('error', (err) => {
       /* c8 ignore next */
@@ -200,52 +235,62 @@ class PlatformaticApp {
   }
 
   #setuplogger (configManager) {
-    // Set the logger if not present (and the config supports it).
-    if (configManager.current.server) {
-      const childLogger = this.#logger.child({
-        name: this.appConfig.id
-      }, { level: configManager.current.server.logger?.level || 'info' })
-      configManager.current.server.logger = childLogger
-    }
+    // Set the logger if not present
+    configManager.current.server = configManager.current.server || {}
+    const childLogger = this.#logger.child({}, { level: configManager.current.server.logger?.level || 'info' })
+    configManager.current.server.logger = childLogger
   }
 
   #startFileWatching () {
+    if (this.#fileWatcher) {
+      return
+    }
     const server = this.server
     const { configManager } = server.platformatic
     const fileWatcher = new FileWatcher({
       path: dirname(configManager.fullPath),
       /* c8 ignore next 2 */
       allowToWatch: this.#originalWatch?.allow,
-      watchIgnore: this.#originalWatch?.ignore
+      watchIgnore: this.#originalWatch?.ignore || []
     })
 
-    fileWatcher.on('update', async () => {
-      this.server.log.debug('files changed')
-      this.restart()
-    })
+    fileWatcher.on('update', this.#debouncedRestart)
 
     fileWatcher.startWatching()
     server.log.debug('start watching files')
     server.platformatic.fileWatcher = fileWatcher
-    server.platformatic.configManager.startWatching()
+    this.#fileWatcher = fileWatcher
   }
 
   async #stopFileWatching () {
-    const watcher = this.server.platformatic.fileWatcher
-
+    const watcher = this.#fileWatcher
     if (watcher) {
-      await watcher.stopWatching()
       this.server.log.debug('stop watching files')
+      await watcher.stopWatching()
       this.server.platformatic.fileWatcher = undefined
-      this.server.platformatic.configManager.stopWatching()
+      this.#fileWatcher = null
     }
   }
 
   #logAndExit (err) {
-    this.config?.configManager?.stopWatching()
     this.#logger.error({ err })
     process.exit(1)
   }
+}
+
+/* c8 ignore next 11 - c8 upgrade marked many existing things as uncovered */
+function clearCjsCache () {
+  // This evicts all of the modules from the require() cache.
+  // Note: This does not clean up children references to the deleted module.
+  // It's likely not a big deal for most cases, but it is a leak. The child
+  // references can be cleaned up, but it is expensive and involves walking
+  // the entire require() cache. See the DEP0144 documentation for how to do
+  // it.
+  Object.keys(require.cache).forEach((key) => {
+    if (!key.match(/node_modules/)) {
+      delete require.cache[key]
+    }
+  })
 }
 
 module.exports = { PlatformaticApp }

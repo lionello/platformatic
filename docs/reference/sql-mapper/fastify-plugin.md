@@ -1,4 +1,4 @@
-# Fastify Plugin
+# sql-mapper Fastify Plugin
 
 The `@platformatic/sql-mapper` package exports a [Fastify](https://fastify.io) plugin that can be used out-of the box in a server application.
 
@@ -9,7 +9,7 @@ The plugin decorates the server with a `platformatic` object that has the follow
 - `db` — the DB wrapper object provided by [`@databases`](https://www.atdatabases.org/)
 - `sql` — the SQL query mapper object provided by [`@databases`](https://www.atdatabases.org/)
 - `entities` — all entity objects with their [API methods](./entities/api)
-- `addEntityHooks` — a function to add a [hook](./entities/hooks) to an entity API method.
+- `addEntityHooks` — a function to add a [hook](./entities/hooks) to an entity API method
 
 The plugin also decorates the Fastify `Request` object with the following:
 
@@ -52,3 +52,28 @@ async function main() {
 
 main()
 ```
+
+#### TypeScript support
+
+In order for this module to work on a TypeScript setup (outside of a Platformatic application),
+you have to add the following to your types:
+
+```ts
+import { Entities, Entity } from '@platformatic/sql-mapper'
+
+type Movie {
+  id: number,
+  title: string
+}
+
+interface AppEntities extends Entities {
+  movie: Entity<Movie>
+}
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    platformatic: SQLMapperPluginInterface<AppEntities>
+  }
+}
+```
+

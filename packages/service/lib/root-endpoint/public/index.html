@@ -10,16 +10,17 @@
       body {
         width: 100%;
         height: 100vh;
-        overflow-y: hidden;
+        overflow-y: auto;
+        overflow-x: hidden;
         --text-color: #FFFFFF;
         --bg-color: #001825;
-        --theme-img: url('./light_mode.svg')
+        --theme-img: url('./images/light_mode.svg')
       }
 
       body.light-theme {
         --text-color: #001825;
         --bg-color: #FFFFFF;
-        --theme-img: url('./dark_mode.svg')
+        --theme-img: url('./images/dark_mode.svg')
       }
 
       body {
@@ -76,15 +77,24 @@
         display: flex;
         column-gap: 3rem;
         justify-content: center;
-        align-items: center;
+        align-items: start;
         margin: 2rem 0;
+      }
+
+      .buttons-list-container {
+        display: flex;
+        flex-direction: column;
+        row-gap: 1rem;
+        justify-content: center;
+        align-items: start;
       }
 
       .button-link {
         width: 250px;
         border: 1px solid var(--text-color);
         border-radius: 2px;
-      } 
+        padding: 2px 6px;
+      }
 
       button {
         border-radius: 8px;
@@ -125,7 +135,7 @@
       }
 
       .polygon14 {
-        background-image: url("background_polygon_14.svg");
+        background-image: url("images/background_polygon_14.svg");
         background-repeat: no-repeat;
         position: fixed;
         height: 868px;
@@ -138,7 +148,7 @@
       }
 
       .polygon28 {
-        background-image: url("background_polygon_28.svg");
+        background-image: url("images/background_polygon_28.svg");
         background-repeat: no-repeat;
         position: absolute;
         height: 212px;
@@ -194,7 +204,7 @@
     <div id="root">
       <div class="polygon14"></div>
       <div class="polygon28"></div>
-      <img class="topFrame" src="background_frame.svg" />
+      <img class="topFrame" src="images/background_frame.svg" />
       <button id="button-theme-selector" type="button" class="theme-selector" alt="theme selector" onclick="toggleLightMode()"></button>
       
       <div id="content">
@@ -202,8 +212,8 @@
         <h1 class="text-center"><span>Welcome to</span><br/><span class="text-main-green">Platformatic Service</span></h1>
         <h2 class="text-center">Explore our flexible toolkit for building robust APIs.</h2>
         <div class="button-container">
-          <a href="https://oss.platformatic.dev" target="_blank" class="button-link">Documentation</a>
-          <a id="openapi-link" target="_blank" class="button-link">OpenAPI Documentation</a>
+          <a href="https://docs.platformatic.dev" target="_blank" class="button-link">Documentation</a>
+          <div class="open-documentation-version buttons-list-container">&nbsp;</div>
           <a id="graphql-link" target="_blank" class="button-link">GraphiQL</a>
         </div>
       </div>
@@ -212,29 +222,47 @@
     <script>
       const currentPath = window.location.pathname
     
-      const openApiLink = document.getElementById('openapi-link')
-      openApiLink.href = currentPath + 'documentation/static/index.html'
-
       const graphqlLink = document.getElementById('graphql-link')
       graphqlLink.href = currentPath + 'graphiql'
 
       const prefersLightScheme = window.matchMedia('(prefers-color-scheme: light)');
       if (prefersLightScheme.matches) {
         document.body.classList.add('light-theme');
-        document.getElementById('logo').src = 'platformatic-logo-light.svg'
+        document.getElementById('logo').src = 'images/platformatic-logo-light.svg'
       } else {
         document.body.classList.remove('light-theme');
-        document.getElementById('logo').src = 'platformatic-logo-dark.svg'
+        document.getElementById('logo').src = 'images/platformatic-logo-dark.svg'
       }
       
       const toggleLightMode = function() {
         document.body.classList.toggle('light-theme');
         if (document.body.classList.contains('light-theme')) {
-          document.getElementById('logo').src = 'platformatic-logo-light.svg'
+          document.getElementById('logo').src = 'images/platformatic-logo-light.svg'
         } else {
-          document.getElementById('logo').src = 'platformatic-logo-dark.svg'
+          document.getElementById('logo').src = 'images/platformatic-logo-dark.svg'
         }
       }
+
+      function join (...paths) {
+        return paths.join('/').replace(/\/+/g, '/')
+      }
+
+      fetch('/_platformatic_versions')
+        .then(response => response.json())
+        .then(versions => {
+          const sharedOpenapiHref = join(currentPath, 'documentation')
+          const openapiButtons = [
+            `<a href="${sharedOpenapiHref}"target="_blank" class="button-link">OpenAPI Documentation</a>`
+          ]
+
+          for (const version of versions) {
+            const href = join(currentPath, version.prefix, 'documentation')
+            openapiButtons.push(`<a href="${href}" target="_blank" class="button-link">OpenAPI Documentation ${version.name}</a>`)
+          }
+
+          const buttonList = document.getElementsByClassName('open-documentation-version')[0]
+          buttonList.innerHTML = openapiButtons.join('')
+        })
     </script>
   </body>
 </html>

@@ -1,8 +1,8 @@
 import { join, basename } from 'path'
 import Postgrator from 'postgrator'
-import { MigrateError } from './errors.mjs'
-import { setupDB } from './utils.js'
-import { stat } from 'fs/promises'
+import { createConnectionPool } from '@platformatic/sql-mapper'
+import { stat, readdir } from 'fs/promises'
+import errors from './errors.js'
 
 class Migrator {
   constructor (migrationConfig, coreConfig, logger) {
@@ -10,6 +10,8 @@ class Migrator {
     this.migrationDir = migrationConfig.dir
     this.migrationsTable = migrationConfig.table
     this.validateChecksums = migrationConfig.validateChecksums
+    this.newline = migrationConfig.newline
+    this.currentSchema = migrationConfig.currentSchema
 
     this.logger = logger
 
@@ -24,7 +26,23 @@ class Migrator {
 
     await this.checkMigrationsDirectoryExists()
 
-    const { db, sql, driver } = await setupDB(this.logger, this.coreConfig)
+    const { db, sql } = await createConnectionPool({
+      ...this.coreConfig,
+      log: this.logger
+    })
+
+    let driver
+
+    /* c8 ignore next 11 */
+    if (db.isPg) {
+      driver = 'pg'
+    } else if (db.isMySql) {
+      driver = 'mysql'
+    } else if (db.isMariaDB) {
+      driver = 'mysql'
+    } else if (db.isSQLite) {
+      driver = 'sqlite3'
+    }
 
     const database = driver !== 'sqlite3'
       ? new URL(this.coreConfig.connectionString).pathname.replace(/^\//, '')
@@ -44,7 +62,9 @@ class Migrator {
         const res = await db.query(sql`${sql.__dangerous__rawValue(query)}`)
         return { rows: res }
       },
-      validateChecksums: this.validateChecksums
+      validateChecksums: this.validateChecksums,
+      newline: this.newline,
+      currentSchema: ['pg', 'mysql'].includes(driver) ? this.currentSchema : undefined
     })
 
     if (this.validateChecksums === true) {
@@ -79,12 +99,13 @@ class Migrator {
       await stat(this.migrationDir)
     } catch (err) {
       if (err.code === 'ENOENT') {
-        throw new MigrateError(`Migrations directory ${this.migrationDir} does not exist`)
+        throw new errors.MigrateMissingMigrationsDirError(this.migrationDir)
       }
     }
   }
 
   async applyMigrations (to) {
+    await this.checkIfMigrationFilesExist()
     await this.setupPostgrator()
     await this.postgrator.migrate(to)
   }
@@ -146,6 +167,19 @@ class Migrator {
       }
     }
     return false
+  }
+
+  async checkIfMigrationFilesExist () {
+    try {
+      const files = await readdir(this.migrationDir)
+      if (files.length === 0) {
+        this.logger.warn(`No migration files in ${this.migrationDir}`)
+      }
+    } catch (err) {
+      if (err.code === 'ENOENT') {
+        throw new errors.MigrateMissingMigrationsDirError(this.migrationDir)
+      }
+    }
   }
 
   async close () {

@@ -3,8 +3,9 @@
 const { resolve, join, dirname } = require('path')
 const pino = require('pino')
 const pretty = require('pino-pretty')
-const { loadConfig } = require('./load-config.js')
+const { loadConfig } = require('@platformatic/config')
 const { isFileAccessible } = require('./utils.js')
+const { readFile, rm } = require('fs/promises')
 
 async function getTSCExecutablePath (cwd) {
   const typescriptPath = require.resolve('typescript')
@@ -48,29 +49,47 @@ async function setup (cwd, config, logger) {
   /* c8 ignore next 4 */
   if (tscExecutablePath === undefined) {
     const msg = 'The tsc executable was not found.'
-    logger.error(msg)
+    logger.warn(msg)
   }
 
-  const tsconfigPath = resolve(cwd, 'tsconfig.json')
-  const tsconfigExists = await isFileAccessible(tsconfigPath)
+  const tsConfigPath = config?.plugins?.typescript?.tsConfig || resolve(cwd, 'tsconfig.json')
+  const tsConfigExists = await isFileAccessible(tsConfigPath)
 
-  if (!tsconfigExists) {
-    const msg = 'The tsconfig.json file was not found.'
-    logger.error(msg)
+  if (!tsConfigExists) {
+    const msg = 'No typescript configuration file was found, skipping compilation.'
+    logger.info(msg)
   }
 
-  return { execa, logger, tscExecutablePath }
+  return { execa, logger, tscExecutablePath, tsConfigPath, tsConfigExists }
 }
 
-async function compile (cwd, config, originalLogger) {
-  const { execa, logger, tscExecutablePath } = await setup(cwd, config, originalLogger)
+async function compile (cwd, config, originalLogger, options) {
+  const { execa, logger, tscExecutablePath, tsConfigPath, tsConfigExists } = await setup(cwd, config, originalLogger)
   /* c8 ignore next 3 */
-  if (!tscExecutablePath) {
+  if (!tscExecutablePath || !tsConfigExists) {
     return false
   }
 
   try {
-    await execa(tscExecutablePath, ['--project', 'tsconfig.json', '--rootDir', '.'], { cwd })
+    const tsFlags = config?.plugins?.typescript?.flags || ['--project', tsConfigPath, '--rootDir', '.']
+    const env = {
+      ...process.env
+    }
+    delete env.NODE_V8_COVERAGE
+    // somehow c8 does not pick up these lines even if there is a specific test
+    /* c8 ignore start */
+    if (options && options.clean) {
+      // delete outdir directory
+      const tsConfigContents = JSON.parse(await readFile(tsConfigPath, 'utf8'))
+      const outDir = tsConfigContents.compilerOptions.outDir
+      if (outDir) {
+        const outDirFullPath = join(dirname(tsConfigPath), outDir)
+        originalLogger.info(`Removing build directory ${outDirFullPath}`)
+        await rm(outDirFullPath, { recursive: true })
+      }
+    }
+    /* c8 ignore stop */
+    await execa(tscExecutablePath, tsFlags, { cwd, env })
     logger.info('Typescript compilation completed successfully.')
     return true
   } catch (error) {
@@ -79,52 +98,37 @@ async function compile (cwd, config, originalLogger) {
   }
 }
 
-// This path is tested but C8 does not see it that way given it needs to work
-// through execa.
-/* c8 ignore next 20 */
-async function compileWatch (cwd, config, originalLogger) {
-  const { execa, logger, tscExecutablePath } = await setup(cwd, config, originalLogger)
-  if (!tscExecutablePath) {
-    return false
-  }
-
-  try {
-    await execa(tscExecutablePath, ['--project', 'tsconfig.json', '--incremental', '--rootDir', '.'], { cwd })
-    logger.info('Typescript compilation completed successfully. Starting watch mode.')
-  } catch (error) {
-    throw new Error('Failed to compile typescript files: ' + error)
-  }
-
-  const child = execa(tscExecutablePath, ['--project', 'tsconfig.json', '--watch', '--incremental'], { cwd })
-  child.stdout.resume()
-  child.stderr.on('data', (data) => {
-    logger.error(data.toString())
-  })
-
-  return { child }
-}
-
 function buildCompileCmd (app) {
   return async function compileCmd (_args) {
     let fullPath = null
+    let config = null
     try {
       const { configManager } = await loadConfig({}, _args, app, {
         watch: false
       })
       await configManager.parseAndValidate()
+      config = configManager.current
       fullPath = dirname(configManager.fullPath)
       /* c8 ignore next 4 */
     } catch (err) {
       console.error(err)
       process.exit(1)
     }
+    const compileOptions = {
+      clean: _args.includes('--clean')
+    }
+    const logger = pino(
+      pretty({
+        translateTime: 'SYS:HH:MM:ss',
+        ignore: 'hostname,pid'
+      })
+    )
 
-    if (!await compile(fullPath)) {
+    if (!await compile(fullPath, config, logger, compileOptions)) {
       process.exit(1)
     }
   }
 }
 
 module.exports.compile = compile
-module.exports.compileWatch = compileWatch
 module.exports.buildCompileCmd = buildCompileCmd

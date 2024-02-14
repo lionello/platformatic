@@ -1,13 +1,5 @@
-import { execa } from 'execa'
-import { access, constants, readFile } from 'fs/promises'
-import { resolve, join, dirname } from 'path'
-import { createRequire } from 'module'
-import semver from 'semver'
-import * as desm from 'desm'
-import ConfigManager from '@platformatic/config'
-
-export const sleep = ms => new Promise((resolve) => setTimeout(resolve, ms))
-export const randomBetween = (min, max) => Math.floor(Math.random() * (max - min + 1) + min)
+import { access, mkdir } from 'fs/promises'
+import { resolve } from 'path'
 
 export async function isFileAccessible (filename, directory) {
   try {
@@ -19,76 +11,10 @@ export async function isFileAccessible (filename, directory) {
   }
 }
 
-export const getUsername = async () => {
+export async function safeMkdir (dir) {
   try {
-    const { stdout } = await execa('git', ['config', 'user.name'])
-    if (stdout?.trim()) {
-      return stdout.trim()
-    }
+    await mkdir(dir, { recursive: true })
   } catch (err) {
-  // ignore: git failed
+    // do nothing
   }
-  try {
-    const { stdout } = await execa('whoami')
-    if (stdout?.trim()) {
-      return stdout.trim()
-    }
-  } catch (err) {
-  // ignore: whoami failed
-  }
-
-  return null
-}
-
-/* c8 ignore next 4 */
-export const getVersion = async () => {
-  const data = await readFile(desm.join(import.meta.url, '..', 'package.json'), 'utf8')
-  return JSON.parse(data).version
-}
-
-export async function isDirectoryWriteable (directory) {
-  try {
-    await access(directory, constants.R_OK | constants.W_OK)
-    return true
-  } catch (err) {
-    return false
-  }
-}
-
-export const validatePath = async projectPath => {
-  // if the folder exists, is OK:
-  const projectDir = resolve(projectPath)
-  const canAccess = await isDirectoryWriteable(projectDir)
-  if (canAccess) {
-    return true
-  }
-  // if the folder does not exist, check if the parent folder exists:
-  const parentDir = dirname(projectDir)
-  const canAccessParent = await isDirectoryWriteable(parentDir)
-  return canAccessParent
-}
-
-export const findDBConfigFile = async (directory) => (ConfigManager.findConfigFile(directory, 'db'))
-export const findServiceConfigFile = async (directory) => (ConfigManager.findConfigFile(directory, 'service'))
-export const findComposerConfigFile = async (directory) => (ConfigManager.findConfigFile(directory, 'composer'))
-export const findRuntimeConfigFile = async (directory) => (ConfigManager.findConfigFile(directory, 'runtime'))
-
-export const getDependencyVersion = async (dependencyName) => {
-  const require = createRequire(import.meta.url)
-  const pathToPackageJson = join(dirname(require.resolve(dependencyName)), 'package.json')
-  const packageJsonFile = await readFile(pathToPackageJson, 'utf-8')
-  const packageJson = JSON.parse(packageJsonFile)
-  return packageJson.version
-}
-
-export const minimumSupportedNodeVersions = ['18.8.0', '19.0.0']
-
-export const isCurrentVersionSupported = (currentVersion) => {
-  // TODO: add try/catch if some unsupported node version is passed
-  for (const version of minimumSupportedNodeVersions) {
-    if (semver.major(currentVersion) === semver.major(version) && semver.gte(currentVersion, version)) {
-      return true
-    }
-  }
-  return false
 }

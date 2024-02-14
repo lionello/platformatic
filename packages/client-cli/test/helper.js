@@ -18,13 +18,17 @@ async function moveToTmpdir (teardown) {
   const tmp = join(__dirname, 'tmp')
   try {
     await fs.mkdir(tmp)
-  } catch {}
+  } catch {
+  }
   const dir = join(tmp, `platformatic-client-${process.pid}-${Date.now()}-${counter++}`)
   await fs.mkdir(dir)
   process.chdir(dir)
   teardown(() => process.chdir(cwd))
-  teardown(() => fs.rm(tmp, { recursive: true }).catch(() => {}))
+  if (!process.env.SKIP_RM_TMP) {
+    teardown(() => fs.rm(tmp, { recursive: true }).catch(() => {}))
+  }
   return dir
 }
 
 module.exports.moveToTmpdir = moveToTmpdir
+module.exports.cliPath = join(__dirname, '..', 'cli.mjs')

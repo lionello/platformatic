@@ -2,6 +2,7 @@
 'use strict'
 
 const { metrics, server, plugins, watch, openApiDefs, openApiBase, clients } = require('@platformatic/service').schema
+const telemetry = require('@platformatic/telemetry').schema
 const pkg = require('../package.json')
 const version = 'v' + pkg.version
 
@@ -34,6 +35,15 @@ const db = {
     poolSize: {
       type: 'integer'
     },
+    idleTimeoutMilliseconds: {
+      type: 'integer'
+    },
+    queueTimeoutMilliseconds: {
+      type: 'integer'
+    },
+    acquireLockTimeoutMilliseconds: {
+      type: 'integer'
+    },
     autoTimestamp: {
       oneOf: [{
         type: 'object',
@@ -60,11 +70,23 @@ const db = {
           graphiql: {
             type: 'boolean'
           },
-          ignore: {
+          include: {
             type: 'object',
-            // TODO add support for column-level ignore
             additionalProperties: {
               type: 'boolean'
+            }
+          },
+          ignore: {
+            type: 'object',
+            additionalProperties: {
+              anyOf: [{
+                type: 'boolean'
+              }, {
+                type: 'object',
+                additionalProperties: {
+                  type: 'boolean'
+                }
+              }]
             }
           },
           subscriptionIgnore: {
@@ -79,6 +101,12 @@ const db = {
           schemaPath: {
             type: 'string',
             resolvePath: true
+          },
+          enabled: {
+            anyOf: [
+              { type: 'boolean' },
+              { type: 'string' }
+            ]
           }
         }
       }]
@@ -90,16 +118,52 @@ const db = {
         type: 'object',
         properties: {
           ...(openApiBase.properties),
-          ignore: {
+          allowPrimaryKeysInInput: {
+            type: 'boolean',
+            default: true
+          },
+          include: {
             type: 'object',
-            // TODO add support for column-level ignore
             additionalProperties: {
               type: 'boolean'
             }
+          },
+          ignore: {
+            type: 'object',
+            additionalProperties: {
+              anyOf: [{
+                type: 'boolean'
+              }, {
+                type: 'object',
+                additionalProperties: {
+                  type: 'boolean'
+                }
+              }]
+            }
+          },
+          enabled: {
+            anyOf: [
+              { type: 'boolean' },
+              { type: 'string' }
+            ]
+          },
+          swaggerPrefix: {
+            type: 'string',
+            description: 'Base URL for the OpenAPI Swagger Documentation'
+          },
+          prefix: {
+            type: 'string',
+            description: 'Base URL for generated Platformatic DB routes'
           }
         },
         additionalProperties: false
       }]
+    },
+    include: {
+      type: 'object',
+      additionalProperties: {
+        type: 'boolean'
+      }
     },
     ignore: {
       type: 'object',
@@ -129,10 +193,19 @@ const db = {
         properties: {
           connectionString: {
             type: 'string'
+          },
+          enabled: {
+            anyOf: [
+              { type: 'boolean' },
+              { type: 'string' }
+            ]
           }
         },
         additionalProperties: false
       }]
+    },
+    cache: {
+      type: 'boolean'
     }
   },
   required: ['connectionString']
@@ -151,13 +224,13 @@ const sharedAuthorizationRule = {
     }
   },
   find: {
-    $ref: '#crud-operation-auth'
+    $ref: '#/$defs/crud-operation-auth'
   },
   save: {
-    $ref: '#crud-operation-auth'
+    $ref: '#/$defs/crud-operation-auth'
   },
   delete: {
-    $ref: '#crud-operation-auth'
+    $ref: '#/$defs/crud-operation-auth'
   }
 }
 
@@ -166,7 +239,7 @@ const authorization = {
   properties: {
     adminSecret: {
       type: 'string',
-      description: 'The password should be used to login dashboard and to access routes under /_admin prefix and for admin access to REST and GraphQL endpoints with X-PLATFORMATIC-ADMIN-SECRET header.'
+      description: 'The password should be used to access routes under /_admin prefix and for admin access to REST and GraphQL endpoints with X-PLATFORMATIC-ADMIN-SECRET header.'
     },
     roleKey: {
       type: 'string',
@@ -250,10 +323,105 @@ const authorization = {
       }
     }
   },
+  additionalProperties: false
+}
+
+const migrations = {
+  type: 'object',
+  properties: {
+    dir: {
+      type: 'string',
+      resolvePath: true,
+      description: 'The path to the directory containing the migrations.'
+    },
+    table: {
+      type: 'string'
+    },
+    validateChecksums: {
+      type: 'boolean'
+    },
+    autoApply: {
+      description: 'Whether to automatically apply migrations when running the migrate command.',
+      anyOf: [{
+        type: 'boolean',
+        default: false
+      }, {
+        type: 'string'
+      }]
+    },
+    migrationsTable: {
+      type: 'string',
+      description: 'Table created to track schema version.',
+      default: 'versions'
+    },
+    newline: {
+      type: 'string',
+      description: 'Force line ending on file when generating checksum. Value should be either CRLF (windows) or LF (unix/mac).'
+    },
+    currentSchema: {
+      type: 'string',
+      description: 'For Postgres and MS SQL Server(will ignore for another DBs). Specifies schema to look to when validating `versions` table columns. For Postgres, run\'s `SET search_path = currentSchema` prior to running queries against db.'
+    }
+  },
   additionalProperties: false,
+  required: ['dir']
+}
+
+const types = {
+  type: 'object',
+  properties: {
+    autogenerate: {
+      type: 'boolean'
+    },
+    dir: {
+      type: 'string',
+      resolvePath: true,
+      description: 'The path to the directory the types should be generated in.'
+    }
+  },
+  additionalProperties: false
+}
+
+const platformaticDBschema = {
+  $id: `https://platformatic.dev/schemas/${version}/db`,
+  $schema: 'http://json-schema.org/draft-07/schema#',
+  title: 'Platformatic DB',
+  type: 'object',
+  properties: {
+    server: {
+      ...server,
+      properties: {
+        ...server.properties,
+        pluginTimeout: {
+          ...server.properties.pluginTimeout,
+          default: 60 * 1000
+        }
+      }
+    },
+    db,
+    authorization,
+    migrations,
+    metrics,
+    types,
+    plugins,
+    telemetry,
+    clients,
+    watch: {
+      anyOf: [watch, {
+        type: 'boolean'
+      }, {
+        type: 'string'
+      }]
+    },
+    $schema: {
+      type: 'string'
+    }
+  },
+  additionalProperties: false,
+  required: ['db'],
   $defs: {
-    crudOperationAuth: {
-      $id: '#crud-operation-auth',
+    ...openApiDefs,
+    'crud-operation-auth': {
       oneOf: [{
         type: 'object',
         description: 'CRUD operation authorization config',
@@ -299,88 +467,6 @@ const authorization = {
       }]
     }
   }
-}
-
-const dashboard = {
-  anyOf: [
-    { type: 'boolean' },
-    {
-      type: 'object',
-      properties: {
-        path: {
-          type: 'string',
-          description: 'The path where the dashboard should be served.'
-        }
-      },
-      additionalProperties: false
-    }
-  ]
-}
-
-const migrations = {
-  type: 'object',
-  properties: {
-    dir: {
-      type: 'string',
-      resolvePath: true,
-      description: 'The path to the directory containing the migrations.'
-    },
-    table: {
-      type: 'string'
-    },
-    validateChecksums: {
-      type: 'boolean'
-    },
-    autoApply: {
-      type: 'boolean',
-      description: 'Whether to automatically apply migrations when running the migrate command.'
-    }
-  },
-  additionalProperties: false,
-  required: ['dir']
-}
-
-const types = {
-  type: 'object',
-  properties: {
-    autogenerate: {
-      type: 'boolean'
-    },
-    dir: {
-      type: 'string',
-      resolvePath: true,
-      description: 'The path to the directory the types should be generated in.'
-    }
-  },
-  additionalProperties: false
-}
-
-const platformaticDBschema = {
-  $id: `https://platformatic.dev/schemas/${version}/db`,
-  $schema: 'http://json-schema.org/draft-07/schema#',
-  type: 'object',
-  properties: {
-    server,
-    db,
-    dashboard,
-    authorization,
-    migrations,
-    metrics,
-    types,
-    plugins,
-    clients,
-    watch: {
-      anyOf: [watch, {
-        type: 'boolean'
-      }]
-    },
-    $schema: {
-      type: 'string'
-    }
-  },
-  additionalProperties: false,
-  required: ['db', 'server'],
-  $defs: openApiDefs
 }
 
 module.exports.schema = platformaticDBschema

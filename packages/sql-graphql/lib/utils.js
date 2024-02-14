@@ -3,6 +3,7 @@
 const graphql = require('graphql')
 const scalars = require('graphql-scalars')
 const { GraphQLJSONObject } = require('graphql-type-json')
+const errors = require('./errors')
 
 // The sqlTypeToGraphQL is shared between
 // all database adapters.
@@ -49,8 +50,12 @@ function sqlTypeToGraphQL (sqlType) {
     case 'date':
       return scalars.GraphQLDate
     case 'time':
-      return graphql.GraphQLString
+      return scalars.GraphQLTime
+    case 'timetz':
+      return scalars.GraphQLTime
     case 'timestamp':
+      return scalars.GraphQLDateTime
+    case 'timestamptz':
       return scalars.GraphQLDateTime
     case 'uuid':
       return graphql.GraphQLID
@@ -71,7 +76,7 @@ function fromSelectionSet (selectionSet, fields = new Set()) {
     } else if (s.kind === 'InlineFragment') {
       fromSelectionSet(s.selectionSet, fields)
     } else {
-      throw new Error('Unsupported kind: ' + s.kind)
+      throw new errors.UnsupportedKindError(s.kind)
     }
   }
   return fields

@@ -1,7 +1,7 @@
 # Configuration
 
 Platformatic DB is configured with a configuration file. It supports the use
-of environment variables as setting values with [configuration placeholders](#configuration-placeholders).
+of environment variables as setting values with [environment variable placeholders](#environment-variable-placeholders).
 
 ## Configuration file
 
@@ -33,16 +33,22 @@ Comments are supported by the JSON5, YAML and TOML file formats.
 
 Configuration settings are organised into the following groups:
 
+- [`server`](#server) **(required)**
 - [`db`](#db) **(required)**
-- [`dashboard`](#dashboard)
 - [`metrics`](#metrics)
 - [`migrations`](#migrations)
 - [`plugins`](#plugins)
-- [`server`](#server) **(required)**
 - [`authorization`](#authorization)
+- [`telemetry`](#telemetry)
+- [`watch`](#watch)
+- [`clients`](#clients)
 
 Sensitive configuration settings, such as a database connection URL that contains
-a password, should be set using [configuration placeholders](#configuration-placeholders).
+a password, should be set using [environment variable placeholders](#environment-variable-placeholders).
+
+### `server`
+
+See [Platformatic Service server](/docs/reference/service/configuration.md#server) for more details.
 
 ### `db`
 
@@ -51,7 +57,7 @@ A **required** object with the following settings:
 - **`connectionString`** (**required**, `string`) — Database connection URL.
   - Example: `postgres://user:password@my-database:5432/db-name`
 
-- ** `schema`** (array of `string`) - Currently supported only for postgres, schemas used tolook for entities. If not provided, the default `public` schema is used.
+- ** `schema`** (array of `string`) - Currently supported only for postgres, schemas used to look for entities. If not provided, the default `public` schema is used.
 
  _Examples_
 
@@ -83,6 +89,20 @@ A **required** object with the following settings:
   }
   ```
 
+  Enables GraphQL support with the `enabled` option
+
+  ```json
+  {
+    "db": {
+      ...
+      "graphql": {
+        ...
+        "enabled": true
+      }
+    }
+  }
+  ```
+
   Enables GraphQL support with GraphiQL
 
   ```json
@@ -96,7 +116,7 @@ A **required** object with the following settings:
   }
   ```
 
-  It's possible to selectively ignore entites:
+  It's possible to selectively ignore entities:
 
   ```json
   {
@@ -159,6 +179,20 @@ A **required** object with the following settings:
   }
   ```
 
+  Enables OpenAPI using the `enabled` option
+
+  ```json
+  {
+    "db": {
+      ...
+      "openapi": {
+        ...
+        "enabled": true
+      }
+    }
+  }
+  ```
+
   Enables OpenAPI with prefix
 
   ```json
@@ -211,7 +245,7 @@ A **required** object with the following settings:
   }
   ```
 
-  It's possible to selectively ignore entites:
+  It's possible to selectively ignore entities:
 
   ```json
   {
@@ -243,6 +277,49 @@ A **required** object with the following settings:
   }
   ```
 
+  It's possible to explicitly identify tables for which you like to build an entity:
+  **Note**: all other tables will be ignored.
+
+  ```json
+  {
+    "db": {
+      ...
+      "openapi": {
+        "include": {
+          "categories": true
+        }
+      }
+    }
+  }
+  ```
+- **`autoTimestamp`** (`boolean` or `object`) - Generate timestamp automatically when inserting/updating records.
+
+- **`allowPrimaryKeysInInput`** (`boolean`) - Allow the user to set the primary keys when creating new entities.
+
+- **`poolSize`** (`number`, default: `10`) — Maximum number of connections in the connection pool.
+
+- **`idleTimeoutMilliseconds`** (`number`, default: `30000`) - Max milliseconds a client can go unused before it is removed from the pool and destroyed.
+
+- **`queueTimeoutMilliseconds`** (`number`, default: `60000`) - Number of milliseconds to wait for a connection from the connection pool before throwing a timeout error.
+
+- **`acquireLockTimeoutMilliseconds`** (`number`, default: `60000`) - Number of milliseconds to wait for a lock on a connection/transaction.
+
+- **`limit`** (`object`) - Set the default and max limit for pagination. Default is 10, max is 1000.
+
+  _Examples_
+
+  ```json
+  {
+    "db": {
+      ...
+      "limit": {
+        "default": 10,
+        "max": 1000
+      }
+    }
+  }
+  ```
+
 - **`ignore`** (`object`) — Key/value object that defines which database tables should not be mapped as API entities.
 
   _Examples_
@@ -257,12 +334,40 @@ A **required** object with the following settings:
     }
   }
   ```
+- **`include`** (`object`) — Key/value object that defines which entities should be exposed.
+
+  _Examples_
+
+  ```json
+  {
+    "db": {
+      ...
+      "include": {
+        "version": true
+      }
+    }
+  }
+  ```
 
 - **`events`** (`boolean` or `object`, default: `true`) — Controls the support for events published by the SQL mapping layer.
   If enabled, this option add support for GraphQL Subscription over WebSocket. By default it uses an in-process message broker.
   It's possible to configure it to use Redis instead.
 
   _Examples_
+
+  Enable events using the `enabled` option.
+
+  ```json
+  {
+    "db": {
+      ...
+      "events": {
+        ...
+        "enabled": true
+      }
+    }
+  }
+  ```
 
   ```json
   {
@@ -295,34 +400,9 @@ A **required** object with the following settings:
   Starting Platformatic DB or running a migration will automatically create the schemalock file.
 
 
-### `dashboard`
-
-This setting can be a `boolean` or an `object`. If set to `true` the dashboard will be served at the root path (`/`).
-
-Supported object properties:
-
-- **`path`** (`string`, default: `/`) — Make the dashboard available at the specified path.
-
-:::tip
-
-Read the [dashboard docs](/docs/reference/db/dashboard) to understand how to create a build or have the Vite's development server up and running.
-
-:::
-
 ### `metrics`
 
-Configuration for a [Prometheus](https://prometheus.io/) server that will export monitoring metrics
-for the current server instance. It uses [`fastify-metrics`](https://github.com/SkeLLLa/fastify-metrics)
-under the hood.
-
-This setting can be a `boolean` or an `object`. If set to `true` the Prometheus server will listen on `http://0.0.0.0:9090`.
-
-Supported object properties:
-
-- **`hostname`** (`string`) — The hostname where Prometheus server will listen for connections.
-- **`port`** (`number`) — The port where Prometheus server will listen for connections.
-- **`auth`** (`object`) — Basic Auth configuration. **`username`** and **`password`** are required here
-  (use [environment variables](#environment-variables)).
+See [Platformatic Service metrics](/docs/reference/service/configuration.md#metrics) for more details.
 
 ### `migrations`
 
@@ -332,111 +412,24 @@ An optional object with the following settings:
 
 - **`dir`** (**required**, `string`): Relative path to the migrations directory.
 - **`autoApply`** (`boolean`, default: `false`): Automatically apply migrations when Platformatic DB server starts.
+- **`migrationsTable`** (`string`, default: `versions`): Table created to track schema version
+- **`validateChecksums`** (`boolean`): Validates checksum of existing SQL migration files already run prior to executing migrations. Unused for JS migrations.
+- **`newline`** (`string`): Force line ending on file when generating checksum. Value should be either CRLF (windows) or LF (unix/mac).
+- **`currentSchema`** (`string`): For Postgres and MS SQL Server(will ignore for another DBs). Specifies schema to look to when validating `versions` table columns. For Postgres, run `SET search_path = currentSchema` prior to running queries against db. 
 
 ### `plugins`
 
-An optional object that defines the plugins loaded by Platformatic DB.
-- **`paths`** (**required**, `array`): an array of paths (`string`)
-  or an array of objects composed as follows,
-  - `path` (`string`): Relative path to plugin's entry point.
-  - `options` (`object`): Optional plugin options.
-  - `encapsulate` (`boolean`): if the path is a folder, it instruct Platformatic to not
-    [encapsulate](https://www.fastify.io/docs/latest/Reference/Encapsulation/) those plugins,
-    allowing decorators and hooks to be shared across all routes.
-  - `maxDepth` (`integer`): if the path is a folder, it limits the depth to load the content from.
-- **`typescript`** (`boolean`): enable typescript compilation. A `tsconfig.json` file is required in the same folder.
-
-  _Example_
-
-  ```json
-  {
-    "plugins": {
-      "paths": [{
-        "path": "./my-plugin.js"
-      }]
-    }
-  }
-  ```
+See [Platformatic Service plugins](/docs/reference/service/configuration.md#plugins) for more details.
 
 ### `watch`
 
-Disable watching for file changes if set to `false`. It can also be customized with the following options:
-
-- **`ignore`** (`string[]`, default: `null`): List of glob patterns to ignore when watching for changes. If `null` or not specified, ignore rule is not applied. Ignore option doesn't work for typescript files.
-- **`allow`** (`string[]`, default: `['*.js', '**/*.js']`): List of glob patterns to allow when watching for changes. If `null` or not specified, allow rule is not applied. Allow option doesn't work for typescript files.
-
-  _Example_
-
-  ```json
-  {
-    "watch": {
-      "ignore": ["*.mjs", "**/*.mjs"],
-      "allow": ["my-plugin.js", "plugins/*.js"]
-    }
-  }
-  ```
-
-### `server`
-
-A **required** object with the following settings:
-
-- **`hostname`** (**required**, `string`) — Hostname where Platformatic DB server will listen for connections.
-- **`port`** (**required**, `number`) — Port where Platformatic DB server will listen for connections.
-- **`healthCheck`** (`boolean` or `object`) — Enables the health check endpoint.
-  - Powered by [`@fastify/under-pressure`](https://github.com/fastify/under-pressure).
-  - The value can be an object, used to specify the interval between checks in milliseconds (default: `5000`)
-
-  _Example_
-
-  ```json
-  {
-    "server": {
-      ...
-      "healthCheck": {
-        "interval": 2000
-      }
-    }
-  }
-  ```
-- **`cors`** (`object`) — Configuration for Cross-Origin Resource Sharing (CORS) headers.
-  - All options will be passed to the [`@fastify/cors`](https://github.com/fastify/fastify-cors) plugin. In order to specify a `RegExp` object, you can pass `{ regexp: 'yourregexp' }`,
-    it will be automatically converted
-- **`https`** (`object`) - Configuration for HTTPS supporting the following options.
-  - `key` (**required**, `string`, `object`, or `array`) - If `key` is a string, it specifies the private key to be used. If `key` is an object, it must have a `path` property specifying the private key file. Multiple keys are supported by passing an array of keys.
-  - `cert` (**required**, `string`, `object`, or `array`) - If `cert` is a string, it specifies the certificate to be used. If `cert` is an object, it must have a `path` property specifying the certificate file. Multiple certificates are supported by passing an array of keys.
-
-- **`logger`** (`object`) -- the [logger configuration](https://www.fastify.io/docs/latest/Reference/Server/#logger).
-- **`pluginTimeout`** (`integer`) -- the number of milliseconds to wait for a Fastify plugin to load
-- **`bodyLimit`** (`integer`) -- the maximum request body size in bytes
-- **`maxParamLength`** (`integer`) -- the maximum length of a request parameter
-- **`caseSensitive`** (`boolean`) -- if `true`, the router will be case sensitive
-- **`ignoreTrailingSlash`** (`boolean`) -- if `true`, the router will ignore the trailing slash
-- **`ignoreTrailingSlash`** (`boolean`) -- if `true`, the router will ignore the trailing slash
-- **`connectionTimeout`** (`integer`) -- the milliseconds to wait for a new HTTP request
-- **`keepAliveTimeout`** (`integer`) -- the milliseconds to wait for a keep-alive HTTP request
-- **`maxRequestsPerSocket`** (`integer`) -- the maximum number of requests per socket
-- **`forceCloseConnections`** (`boolean` or `"idle"`) -- if `true`, the server will close all connections when it is closed
-- **`requestTimeout`** (`integer`) -- the milliseconds to wait for a request to be completed
-- **`disableRequestLogging`** (`boolean`) -- if `true`, the request logger will be disabled
-- **`exposeHeadRoutes`** (`boolean`) -- if `true`, the router will expose HEAD routes
-- **`serializerOpts`** (`object`) -- the [serializer options](https://www.fastify.io/docs/latest/Reference/Server/#serializeropts)
-- **`requestIdHeader`** (`string` or `false`) -- the name of the header that will contain the request id
-- **`requestIdLogLabel`** (`string`) -- Defines the label used for the request identifier when logging the request. default: `'reqId'`
-- **`jsonShorthand`** (`boolean`) -- default: `true` -- visit [fastify docs](https://www.fastify.io/docs/latest/Reference/Server/#jsonshorthand) for more details
-- **`trustProxy`** (`boolean` or `integer` or `string` or `String[]`) -- default: `false` -- visit [fastify docs](https://www.fastify.io/docs/latest/Reference/Server/#trustproxy) for more details
-
-:::tip
-
-See the [fastify docs](https://www.fastify.io/docs/latest/Reference/Server) for more details.
-
-:::
+See [Platformatic Service watch](/docs/reference/service/configuration.md#watch) for more details.
 
 ### `authorization`
 
 An optional object with the following settings:
 
-- `adminSecret` (`string`): A secret that will be required as a password to
-access the Platformatic DB dashboard. This secret can also be sent in an
+- `adminSecret` (`string`): A secret that should be sent in an
 `x-platformatic-admin-secret` HTTP header when performing GraphQL/REST API
 calls. Use an [environment variable placeholder](#environment-variable-placeholders)
 to securely provide the value for this setting.
@@ -480,77 +473,37 @@ operations are allowed unless `adminSecret` is passed.
 }
 ```
 
+### `telemetry`
+
+See [Platformatic Service telemetry](/docs/reference/service/configuration.md#telemetry) for more details.
+
+### `watch`
+
+See [Platformatic Service watch](/docs/reference/service/configuration.md#watch) for more details.
+
+### `clients`
+
+See [Platformatic Service clients](/docs/reference/service/configuration.md#clients) for more details.
+
 ## Environment variable placeholders
 
-The value for any configuration setting can be replaced with an environment variable
-by adding a placeholder in the configuration file, for example `{PLT_SERVER_LOGGER_LEVEL}`.
-
-All placeholders in a configuration must be available as an environment variable
-and must meet the [allowed placeholder name](#allowed-placeholder-names) rules.
-
-### Example
-
-```json title="platformatic.db.json"
-{
-  "db": {
-    "connectionString": "{DATABASE_URL}"
-  },
-  "server": {
-    "logger": {
-      "level": "{PLT_SERVER_LOGGER_LEVEL}"
-    },
-    "port": "{PORT}"
-  }
-}
-```
-
-Platformatic will replace the placeholders in this example with the environment
-variables of the same name.
+See [Environment variable placeholders](/docs/reference/service/configuration.md#environment-variable-placeholders) for more details.
 
 ### Setting environment variables
 
-If a `.env` file exists it will automatically be loaded by Platformatic using
-[`dotenv`](https://github.com/motdotla/dotenv). For example:
-
-```plaintext title=".env"
-PLT_SERVER_LOGGER_LEVEL=info
-PORT=8080
-```
-
-The `.env` file must be located in the same folder as the Platformatic configuration
-file or in the current working directory.
-
-Environment variables can also be set directly on the commmand line, for example:
-
-```bash
-PLT_SERVER_LOGGER_LEVEL=debug npx platformatic db
-```
+See [Setting environment variables](/docs/reference/service/configuration.md#setting-environment-variables) for more details.
 
 ### Allowed placeholder names
 
-Only placeholder names prefixed with `PLT_`, or that are in this allow list, will be
-dynamically replaced in the configuration file:
+See [Allowed placeholder names](/docs/reference/service/configuration.md#allowed-placeholder-names) for more details.
 
-- `PORT`
-- `DATABASE_URL`
+### PLT_ROOT
 
-This restriction is to avoid accidentally exposing system environment variables.
-An error will be raised by Platformatic if it finds a configuration placeholder
-that isn't allowed.
-
-The default allow list can be extended by passing a `--allow-env` CLI option with a
-comma separated list of strings, for example:
-
-```bash
-npx platformatic db --allow-env=HOST,SERVER_LOGGER_LEVEL
-```
-
-If `--allow-env` is passed as an option to the CLI, it will be merged with the
-default allow list.
+The `{PLT_ROOT}` placeholder is automatically set to the directory containing the configuration file, so it can be used to configure relative paths.
 
 ## Sample Configuration
 
-This is a bare minimum configuration for Platformatic DB. Uses a local `./db.sqlite` SQLite database, with OpenAPI and GraphQL support, and with the dashboard enabled.
+This is a bare minimum configuration for Platformatic DB. Uses a local `./db.sqlite` SQLite database, with OpenAPI and GraphQL support.
 
 Server will listen to `http://127.0.0.1:3042`
 
@@ -565,7 +518,9 @@ Server will listen to `http://127.0.0.1:3042`
     "graphiql": true,
     "openapi": true,
     "graphql": true
-  },
-  "dashboard": true
+  }
 }
 ```
+
+
+ 

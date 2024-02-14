@@ -99,7 +99,7 @@ library can be specified in the `authorization.jwt.jwks` object.
 
 JWT claims can be namespaced to avoid name collisions. If so, we will receive tokens
 with custom claims such as: `https://platformatic.dev/X-PLATFORMATIC-ROLE`
-(where `https://platformatic.cloud/` is the namespace).
+(where `https://platformatic.dev/` is the namespace).
 If we want to map these claims to user metadata removing our namespace, we can
 specify the namespace in the JWT options:
 
@@ -175,4 +175,19 @@ that presented the `adminSecret` to perform any operation on any entity:
   "delete": false,
   "save": false
 }
+```
+
+## Custom authorization strategies
+
+You can create your own authorization strategy using a `addAuthStrategy` function. `addAuthStrategy` accepts a strategy `name` and a `createSession` function as a params. `createSession` function should set `request.user` object. All custom strategies will be executed after `jwt` and `webhook` default strategies.
+
+_Example_
+
+```js
+app.addAuthStrategy({
+  name: 'custom-auth-strategy',
+  createSession: async (req, reply) => {
+    req.user = { id: 42, role: 'admin' }
+  }
+})
 ```

@@ -1,93 +1,46 @@
 'use strict'
 
-const { once, EventEmitter } = require('node:events')
-const { randomUUID } = require('node:crypto')
-
-const MAX_LISTENERS_COUNT = 100
-
-class RuntimeApiClient extends EventEmitter {
-  #worker
-
-  constructor (worker) {
-    super()
-    this.setMaxListeners(MAX_LISTENERS_COUNT)
-
-    this.#worker = worker
-    this.#worker.on('message', (message) => {
-      if (message.operationId) {
-        this.emit(message.operationId, message)
-      }
-    })
-  }
-
-  async start () {
-    return this.#sendCommand('plt:start-services')
-  }
-
-  async stop () {
-    await this.#sendCommand('plt:stop-services')
-  }
-
-  async close () {
-    await this.#sendCommand('plt:stop-services')
-    await this.#sendClose()
-  }
-
-  async restart () {
-    return this.#sendCommand('plt:restart-services')
-  }
-
-  async getServices () {
-    return this.#sendCommand('plt:get-services')
-  }
-
-  async getServiceDetails (id) {
-    return this.#sendCommand('plt:get-service-details', { id })
-  }
-
-  async getServiceConfig (id) {
-    return this.#sendCommand('plt:get-service-config', { id })
-  }
-
-  async startService (id) {
-    return this.#sendCommand('plt:start-service', { id })
-  }
-
-  async stopService (id) {
-    return this.#sendCommand('plt:stop-service', { id })
-  }
-
-  async inject (id, injectParams) {
-    return this.#sendCommand('plt:inject', { id, injectParams })
-  }
-
-  async #sendCommand (command, params = {}) {
-    const operationId = randomUUID()
-
-    this.#worker.postMessage({ operationId, command, params })
-    const [message] = await once(this, operationId)
-
-    const { error, data } = message
-    if (error !== null) {
-      throw new Error(error)
-    }
-
-    return JSON.parse(data)
-  }
-
-  async #sendClose () {
-    this.#worker.postMessage({ command: 'plt:close' })
-    await once(this.#worker, 'exit')
-  }
-}
+const { getGlobalDispatcher, setGlobalDispatcher } = require('undici')
+const FastifyUndiciDispatcher = require('fastify-undici-dispatcher')
+const { PlatformaticApp } = require('./app')
+const errors = require('./errors')
+const { printSchema } = require('graphql')
 
 class RuntimeApi {
   #services
   #dispatcher
 
-  constructor (services, dispatcher) {
-    this.#services = services
-    this.#dispatcher = dispatcher
+  constructor (config, logger, loaderPort) {
+    this.#services = new Map()
+    const telemetryConfig = config.telemetry
+
+    for (let i = 0; i < config.services.length; ++i) {
+      const service = config.services[i]
+      const serviceTelemetryConfig = telemetryConfig ? { ...telemetryConfig, serviceName: `${telemetryConfig.serviceName}-${service.id}` } : null
+
+      // If the service is an entrypoint and runtime server config is defined, use it.
+      let serverConfig = null
+      if (config.server && service.entrypoint) {
+        serverConfig = config.server
+      } else if (service.useHttp) {
+        serverConfig = {
+          port: 0,
+          host: '127.0.0.1',
+          keepAliveTimeout: 5000
+        }
+      }
+
+      const app = new PlatformaticApp(service, loaderPort, logger, serviceTelemetryConfig, serverConfig)
+
+      this.#services.set(service.id, app)
+    }
+
+    this.#dispatcher = new FastifyUndiciDispatcher({
+      dispatcher: getGlobalDispatcher(),
+      // setting the domain here allows for fail-fast scenarios
+      domain: '.plt.local'
+    })
+    setGlobalDispatcher(this.#dispatcher)
   }
 
   async startListening (parentPort) {
@@ -107,9 +60,22 @@ class RuntimeApi {
   }
 
   async #handleProcessLevelEvent (message) {
-    for (const service of this.#services.values()) {
+    const services = [...this.#services.values()]
+    await Promise.allSettled(services.map(async (service) => {
       await service.handleProcessLevelEvent(message)
+    }))
+
+    for (const service of services) {
+      if (service.getStatus() === 'started') {
+        return
+      }
     }
+
+    if (this.#dispatcher) {
+      await this.#dispatcher.close()
+    }
+
+    process.exit() // Exit the worker thread if all services are stopped
   }
 
   async #executeCommand (message) {
@@ -125,9 +91,9 @@ class RuntimeApi {
   async #runCommandHandler (command, params) {
     switch (command) {
       case 'plt:start-services':
-        return this.#startServices(params)
+        return this.startServices(params)
       case 'plt:stop-services':
-        return this.#stopServices(params)
+        return this.stopServices(params)
       case 'plt:restart-services':
         return this.#restartServices(params)
       case 'plt:get-services':
@@ -136,6 +102,10 @@ class RuntimeApi {
         return this.#getServiceDetails(params)
       case 'plt:get-service-config':
         return this.#getServiceConfig(params)
+      case 'plt:get-service-openapi-schema':
+        return this.#getServiceOpenapiSchema(params)
+      case 'plt:get-service-graphql-schema':
+        return this.#getServiceGraphqlSchema(params)
       case 'plt:start-service':
         return this.#startService(params)
       case 'plt:stop-service':
@@ -144,11 +114,11 @@ class RuntimeApi {
         return this.#inject(params)
       /* c8 ignore next 2 */
       default:
-        throw new Error(`Unknown Runtime API command: '${command}'`)
+        throw new errors.UnknownRuntimeAPICommandError(command)
     }
   }
 
-  async #startServices () {
+  async startServices () {
     let entrypointUrl = null
     for (const service of this.#services.values()) {
       await service.start()
@@ -163,13 +133,15 @@ class RuntimeApi {
     return entrypointUrl
   }
 
-  async #stopServices () {
+  async stopServices () {
+    const stopServiceReqs = [this.#dispatcher.close()]
     for (const service of this.#services.values()) {
       const serviceStatus = service.getStatus()
       if (serviceStatus === 'started') {
-        await service.stop()
+        stopServiceReqs.push(service.stop())
       }
     }
+    await Promise.all(stopServiceReqs)
   }
 
   async #restartServices () {
@@ -208,7 +180,7 @@ class RuntimeApi {
     const service = this.#services.get(id)
 
     if (!service) {
-      throw new Error(`Service with id '${id}' not found`)
+      throw new errors.ServiceNotFoundError(id)
     }
 
     return service
@@ -227,10 +199,50 @@ class RuntimeApi {
 
     const { config } = service
     if (!config) {
-      throw new Error(`Service with id '${id}' is not started`)
+      throw new errors.ServiceNotStartedError(id)
     }
 
     return config.configManager.current
+  }
+
+  async #getServiceOpenapiSchema ({ id }) {
+    const service = this.#getServiceById(id)
+
+    if (!service.config) {
+      throw new errors.ServiceNotStartedError(id)
+    }
+
+    if (typeof service.server.swagger !== 'function') {
+      return null
+    }
+
+    try {
+      await service.server.ready()
+      const openapiSchema = service.server.swagger()
+      return openapiSchema
+    } catch (err) {
+      throw new errors.FailedToRetrieveOpenAPISchemaError(id, err.message)
+    }
+  }
+
+  async #getServiceGraphqlSchema ({ id }) {
+    const service = this.#getServiceById(id)
+
+    if (!service.config) {
+      throw new errors.ServiceNotStartedError(id)
+    }
+
+    if (typeof service.server.graphql !== 'function') {
+      return null
+    }
+
+    try {
+      await service.server.ready()
+      const graphqlSchema = printSchema(service.server.graphql.schema)
+      return graphqlSchema
+    } catch (err) {
+      throw new errors.FailedToRetrieveGraphQLSchemaError(id, err.message)
+    }
   }
 
   async #startService ({ id }) {
@@ -248,7 +260,7 @@ class RuntimeApi {
 
     const serviceStatus = service.getStatus()
     if (serviceStatus !== 'started') {
-      throw new Error(`Service with id '${id}' is not started`)
+      throw new errors.ServiceNotStartedError(id)
     }
 
     const res = await service.server.inject(injectParams)
@@ -263,4 +275,4 @@ class RuntimeApi {
   }
 }
 
-module.exports = { RuntimeApi, RuntimeApiClient }
+module.exports = RuntimeApi

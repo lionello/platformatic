@@ -1,5 +1,7 @@
 'use strict'
 
+const { connect, dropAllTables } = require('..')
+
 // Needed to work with dates & postgresql
 // See https://node-postgres.com/features/types/
 process.env.TZ = 'UTC'
@@ -35,68 +37,56 @@ if (!process.env.DB || process.env.DB === 'postgresql') {
 module.exports.connInfo = connInfo
 
 module.exports.clear = async function (db, sql) {
-  try {
-    await db.query(sql`DROP TABLE editors`)
-  } catch {
-  }
+  await dropAllTables(db, sql)
+  await dropAllTables(db, sql, ['test1', 'test2'])
+}
 
-  try {
-    await db.query(sql`DROP TABLE pages`)
-  } catch (err) {
-  }
+const fakeLogger = {
+  trace: () => { },
+  debug: () => { },
+  info: () => { },
+  warn: () => { },
+  error: () => { },
+  fatal: () => { }
+}
 
-  try {
-    await db.query(sql`DROP TABLE categories`)
-  } catch {
-  }
+module.exports.fakeLogger = fakeLogger
 
-  try {
-    await db.query(sql`DROP TABLE posts`)
-  } catch {
-  }
+module.exports.setupDatabase = async function ({ seed, cache, t }) {
+  return connect({
+    connectionString: connInfo.connectionString,
+    log: fakeLogger,
+    onDatabaseLoad: async (db, sql) => {
+      t.after(() => db.dispose())
 
-  try {
-    await db.query(sql`DROP TABLE simple_types`)
-  } catch {
-  }
+      for (const query of seed) {
+        await db.query(sql(query))
+      }
+    },
+    ignore: {},
+    hooks: {},
+    cache
+  })
+}
 
-  try {
-    await db.query(sql`DROP TABLE owners`)
-  } catch {
-  }
-
-  try {
-    await db.query(sql`DROP TABLE users`)
-  } catch {
-  }
-
-  try {
-    await db.query(sql`DROP TABLE versions`)
-  } catch {
-  }
-
-  try {
-    await db.query(sql`DROP TYPE pagetype`)
-  } catch {
-  }
-
-  try {
-    await db.query(sql`DROP TABLE test1.pages`)
-  } catch (err) {
-  }
-
-  try {
-    await db.query(sql`DROP TABLE test2.users`)
-  } catch (err) {
-  }
-
-  try {
-    await db.query(sql`DROP TABLE test2.pages`)
-  } catch (err) {
-  }
-
-  try {
-    await db.query(sql`DROP TABLE generated_test`)
-  } catch (err) {
+module.exports.createBasicPages = async function (db, sql) {
+  if (module.exports.isSQLite) {
+    await db.query(sql`CREATE TABLE pages (
+      id INTEGER PRIMARY KEY,
+      title VARCHAR(42)
+    );`)
+    await db.query(sql`CREATE TABLE categories (
+      id INTEGER PRIMARY KEY,
+      name VARCHAR(42)
+    );`)
+  } else {
+    await db.query(sql`CREATE TABLE pages (
+      id SERIAL PRIMARY KEY,
+      title VARCHAR(42)
+    );`)
+    await db.query(sql`CREATE TABLE categories (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(42)
+    );`)
   }
 }

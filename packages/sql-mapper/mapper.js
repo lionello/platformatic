@@ -1,17 +1,24 @@
 'use strict'
 
-const buildEntity = require('./lib/entity')
-const queriesFactory = require('./lib/queries')
 const fp = require('fastify-plugin')
+const { findNearestString } = require('@platformatic/utils')
+const buildEntity = require('./lib/entity')
+const buildCleanUp = require('./lib/clean-up')
+const queriesFactory = require('./lib/queries')
 const { areSchemasSupported } = require('./lib/utils')
+const errors = require('./lib/errors')
+const setupCache = require('./lib/cache')
 
 // Ignore the function as it is only used only for MySQL and PostgreSQL
 /* istanbul ignore next */
-async function buildConnection (log, createConnectionPool, connectionString, poolSize, schema) {
+async function buildConnection (log, createConnectionPool, connectionString, poolSize, schema, idleTimeoutMilliseconds, queueTimeoutMilliseconds, acquireLockTimeoutMilliseconds) {
   const db = await createConnectionPool({
     connectionString,
     bigIntMode: 'string',
     poolSize,
+    idleTimeoutMilliseconds,
+    queueTimeoutMilliseconds,
+    acquireLockTimeoutMilliseconds,
     onQueryStart: (_query, { text, values }) => {
       log.trace({
         query: {
@@ -46,55 +53,75 @@ const defaultAutoTimestampFields = {
   updatedAt: 'updated_at'
 }
 
-async function connect ({ connectionString, log, onDatabaseLoad, poolSize = 10, ignore = {}, autoTimestamp = true, hooks = {}, schema, limit = {}, dbschema }) {
+async function createConnectionPool ({ log, connectionString, poolSize, idleTimeoutMilliseconds, queueTimeoutMilliseconds, acquireLockTimeoutMilliseconds }) {
+  let db
+  let sql
+
+  poolSize = poolSize || 10
+
+  /* istanbul ignore next */
+  if (connectionString.indexOf('postgres') === 0) {
+    const createConnectionPoolPg = require('@databases/pg')
+    db = await buildConnection(log, createConnectionPoolPg, connectionString, poolSize, null, idleTimeoutMilliseconds, queueTimeoutMilliseconds, acquireLockTimeoutMilliseconds)
+    sql = createConnectionPoolPg.sql
+    db.isPg = true
+  } else if (connectionString.indexOf('mysql') === 0) {
+    const createConnectionPoolMysql = require('@databases/mysql')
+    db = await buildConnection(log, createConnectionPoolMysql, connectionString, poolSize, null, idleTimeoutMilliseconds, queueTimeoutMilliseconds, acquireLockTimeoutMilliseconds)
+    sql = createConnectionPoolMysql.sql
+    const version = (await db.query(sql`SELECT VERSION()`))[0]['VERSION()']
+    db.version = version
+    db.isMariaDB = version.indexOf('maria') !== -1
+    if (!db.isMariaDB) {
+      db.isMySql = true
+    }
+  } else if (connectionString.indexOf('sqlite') === 0) {
+    const sqlite = require('@matteo.collina/sqlite-pool')
+    const path = connectionString.replace('sqlite://', '')
+    db = sqlite.default(connectionString === 'sqlite://:memory:' ? undefined : path, {}, {
+      // TODO make this configurable
+      maxSize: 1,
+      // TODO make this configurable
+      // 10s max time to wait for a connection
+      releaseTimeoutMilliseconds: 10000,
+      onQuery ({ text, values }) {
+        log.trace({
+          query: {
+            text
+          }
+        }, 'query')
+      }
+    })
+    sql = sqlite.sql
+    db.isSQLite = true
+  } else {
+    throw new errors.SpecifyProtocolError()
+  }
+
+  return { db, sql }
+}
+
+async function connect ({ connectionString, log, onDatabaseLoad, poolSize, include = {}, ignore = {}, autoTimestamp = true, hooks = {}, schema, limit = {}, dbschema, cache, idleTimeoutMilliseconds, queueTimeoutMilliseconds, acquireLockTimeoutMilliseconds }) {
   if (typeof autoTimestamp === 'boolean' && autoTimestamp === true) {
     autoTimestamp = defaultAutoTimestampFields
   }
   // TODO validate config using the schema
   if (!connectionString) {
-    throw new Error('connectionString is required')
+    throw new errors.ConnectionStringRequiredError()
   }
 
   let queries
-  let sql
-  let db
+  const { db, sql } = await createConnectionPool({ log, connectionString, poolSize, queueTimeoutMilliseconds, acquireLockTimeoutMilliseconds, idleTimeoutMilliseconds })
 
   /* istanbul ignore next */
-  if (connectionString.indexOf('postgres') === 0) {
-    const createConnectionPoolPg = require('@databases/pg')
-    db = await buildConnection(log, createConnectionPoolPg, connectionString, poolSize)
-    sql = createConnectionPoolPg.sql
+  if (db.isPg) {
     queries = queriesFactory.pg
-    db.isPg = true
-  } else if (connectionString.indexOf('mysql') === 0) {
-    const createConnectionPoolMysql = require('@databases/mysql')
-    db = await buildConnection(log, createConnectionPoolMysql, connectionString, poolSize)
-    sql = createConnectionPoolMysql.sql
-    const version = (await db.query(sql`SELECT VERSION()`))[0]['VERSION()']
-    db.version = version
-    db.isMariaDB = version.indexOf('maria') !== -1
-    if (db.isMariaDB) {
-      queries = queriesFactory.mariadb
-    } else {
-      db.isMySql = true
-      queries = queriesFactory.mysql
-    }
-  } else if (connectionString.indexOf('sqlite') === 0) {
-    const sqlite = require('@databases/sqlite')
-    const path = connectionString.replace('sqlite://', '')
-    db = sqlite(connectionString === 'sqlite://:memory:' ? undefined : path)
-    db._database.on('trace', sql => {
-      log.trace({
-        query: {
-          text: sql
-        }
-      }, 'query')
-    })
-    sql = sqlite.sql
+  } else if (db.isMySql) {
+    queries = queriesFactory.mysql
+  } else if (db.isMariaDB) {
+    queries = queriesFactory.mariadb
+  } else if (db.isSQLite) {
     queries = queriesFactory.sqlite
-    db.isSQLite = true
-  } else {
-    throw new Error('You must specify either postgres, mysql or sqlite as protocols')
   }
 
   // Specify an empty array must be the same of specifying no schema
@@ -136,12 +163,41 @@ async function connect ({ connectionString, log, onDatabaseLoad, poolSize = 10, 
       }
     }
 
+    const schemaTables = dbschema.map(table => table.table)
+    if (Object.keys(include).length) {
+      for (const includedTable of Object.keys(include)) {
+        if (!schemaTables.includes(includedTable)) {
+          const nearestTable = findNearestString(schemaTables, includedTable)
+          let warningMessage = `Specified table "${includedTable}" not found.`
+          if (nearestTable) {
+            warningMessage += ` Did you mean "${nearestTable}"?`
+          }
+          log.warn(warningMessage)
+        }
+      }
+    }
+
+    for (const ignoredTable of Object.keys(ignore)) {
+      if (!schemaTables.includes(ignoredTable)) {
+        const nearestTable = findNearestString(schemaTables, ignoredTable)
+        let warningMessage = `Ignored table "${ignoredTable}" not found.`
+        if (nearestTable) {
+          warningMessage += ` Did you mean "${nearestTable}"?`
+        }
+        log.warn(warningMessage)
+      }
+    }
+
     for (const { table, schema, columns, constraints } of dbschema) {
       // The following line is a safety net when developing this module,
       // it should never happen.
       /* istanbul ignore next */
       if (typeof table !== 'string') {
-        throw new Error(`Table must be a string, got '${table}'`)
+        throw new errors.TableMustBeAStringError(table)
+      }
+      // If include is being used and a table is not explicitly included add it to the ignore object
+      if (Object.keys(include).length && !include[table]) {
+        ignore[table] = true
       }
       if (ignore[table] === true) {
         continue
@@ -162,13 +218,20 @@ async function connect ({ connectionString, log, onDatabaseLoad, poolSize = 10, 
       }
     }
 
-    return {
+    const res = {
       db,
       sql,
       entities,
+      cleanUpAllEntities: buildCleanUp(db, sql, log, entities, queries),
       addEntityHooks,
       dbschema
     }
+
+    if (cache) {
+      res.cache = setupCache(res, cache)
+    }
+
+    return res
   } catch (err) /* istanbul ignore next */ {
     db.dispose()
     throw err
@@ -177,7 +240,7 @@ async function connect ({ connectionString, log, onDatabaseLoad, poolSize = 10, 
   function addEntityHooks (entityName, hooks) {
     const entity = entities[entityName]
     if (!entity) {
-      throw new Error('Cannot find entity ' + entityName)
+      throw new errors.CannotFindEntityError(entityName)
     }
     for (const key of Object.keys(hooks)) {
       if (hooks[key] && entity[key]) {
@@ -212,7 +275,64 @@ async function sqlMapper (app, opts) {
   })
 }
 
+async function dropTable (db, sql, table) {
+  try {
+    if (db.isSQLite) {
+      await db.query(sql`DROP TABLE ${sql(table)};`)
+    } else {
+      await db.query(sql`DROP TABLE ${sql(table)} CASCADE;`)
+    }
+    return table
+  } catch (err) {
+    // ignore, it will be dropped on the next roundon the next roundon the next roundon the next round
+  }
+}
+
+async function dropAllTables (db, sql, schemas) {
+  let queries
+  /* istanbul ignore next */
+  if (db.isPg) {
+    queries = queriesFactory.pg
+  } else if (db.isMySql) {
+    queries = queriesFactory.mysql
+  } else if (db.isMariaDB) {
+    queries = queriesFactory.mariadb
+  } else if (db.isSQLite) {
+    queries = queriesFactory.sqlite
+  }
+
+  const tables = new Set((await queries.listTables(db, sql, schemas)).map((t) => {
+    /* istanbul ignore next */
+    if (t.schema) {
+      return `${t.schema}.${t.table}`
+    }
+    return t.table
+  }))
+  let count = 0
+
+  while (tables.size > 0) {
+    if (count++ > 100) {
+      throw new Error('too many iterations, unable to clear the db')
+    }
+
+    const deletes = []
+    for (const table of tables) {
+      deletes.push(dropTable(db, sql, table))
+    }
+
+    const res = await Promise.all(deletes)
+    for (const table of res) {
+      if (table) {
+        tables.delete(table)
+      }
+    }
+  }
+}
+
 module.exports = fp(sqlMapper)
 module.exports.connect = connect
+module.exports.createConnectionPool = createConnectionPool
 module.exports.plugin = module.exports
 module.exports.utils = require('./lib/utils')
+module.exports.errors = errors
+module.exports.dropAllTables = dropAllTables

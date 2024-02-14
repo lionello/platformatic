@@ -2,8 +2,9 @@
 
 const { on } = require('events')
 const { join } = require('node:path')
+const { tmpdir } = require('node:os')
+const { mkdtemp, rm } = require('node:fs/promises')
 
-const tap = require('tap')
 const split = require('split2')
 const { Agent, setGlobalDispatcher } = require('undici')
 
@@ -14,12 +15,6 @@ setGlobalDispatcher(new Agent({
     rejectUnauthorized: false
   }
 }))
-
-// This should not be needed, but a weird combination
-// of node-tap, Windows, c8 and ESM makes this necessary.
-tap.teardown(() => {
-  process.exit(0)
-})
 
 const cliPath = join(__dirname, '..', '..', 'composer.mjs')
 
@@ -55,4 +50,13 @@ async function start (...args) {
   }
 }
 
-module.exports = { start, cliPath }
+async function tmpDir (t, name) {
+  const cwd = await mkdtemp(join(tmpdir(), name))
+  t.after(async () => {
+    await rm(cwd, { recursive: true, force: true })
+  })
+
+  return cwd
+}
+
+module.exports = { start, tmpDir, cliPath }

@@ -1,14 +1,16 @@
 'use strict'
 
-require('./helper')
-const { test } = require('tap')
-const { buildServer } = require('..')
+const os = require('node:os')
+const assert = require('node:assert')
+const { test } = require('node:test')
+const { join } = require('node:path')
+const { writeFile, rm } = require('node:fs/promises')
 const { request } = require('undici')
-const { join } = require('path')
-const os = require('os')
-const { writeFile } = require('fs/promises')
+const { buildServer } = require('..')
+const { setTimeout: sleep } = require('timers/promises')
+const fs = require('fs/promises')
 
-test('config reloads', async ({ teardown, equal, pass, same }) => {
+test('config reloads', async (t) => {
   const file = join(os.tmpdir(), `${process.pid}-1.js`)
 
   await writeFile(file, `
@@ -33,15 +35,15 @@ test('config reloads', async ({ teardown, equal, pass, same }) => {
     metrics: false
   })
 
-  teardown(async () => {
+  t.after(async () => {
     await app.close()
   })
   await app.start()
 
   {
     const res = await request(`${app.url}/`)
-    equal(res.statusCode, 200, 'add status code')
-    same(await res.body.text(), 'hello', 'response')
+    assert.strictEqual(res.statusCode, 200, 'add status code')
+    assert.deepStrictEqual(await res.body.text(), 'hello', 'response')
   }
 
   await app.platformatic.configManager.update({
@@ -64,12 +66,12 @@ test('config reloads', async ({ teardown, equal, pass, same }) => {
 
   {
     const res = await request(`${app.url}/`)
-    equal(res.statusCode, 200, 'add status code')
-    same(await res.body.text(), 'ciao mondo', 'response')
+    assert.strictEqual(res.statusCode, 200, 'add status code')
+    assert.deepStrictEqual(await res.body.text(), 'ciao mondo', 'response')
   }
 })
 
-test('config reloads from a written file', async ({ teardown, equal, pass, same }) => {
+test('config reloads from a written file', async (t) => {
   const config = join(os.tmpdir(), `${process.pid}-2.json`)
   const file = join(os.tmpdir(), `${process.pid}-2.js`)
 
@@ -96,15 +98,15 @@ test('config reloads from a written file', async ({ teardown, equal, pass, same 
 
   const app = await buildServer(config)
 
-  teardown(async () => {
+  t.after(async () => {
     await app.close()
   })
   await app.start()
 
   {
     const res = await request(`${app.url}/`)
-    equal(res.statusCode, 200, 'add status code')
-    same(await res.body.text(), 'hello', 'response')
+    assert.strictEqual(res.statusCode, 200, 'add status code')
+    assert.deepStrictEqual(await res.body.text(), 'hello', 'response')
   }
 
   await app.platformatic.configManager.update({
@@ -127,12 +129,12 @@ test('config reloads from a written file', async ({ teardown, equal, pass, same 
 
   {
     const res = await request(`${app.url}/`)
-    equal(res.statusCode, 200, 'add status code')
-    same(await res.body.text(), 'ciao mondo', 'response')
+    assert.strictEqual(res.statusCode, 200, 'add status code')
+    assert.deepStrictEqual(await res.body.text(), 'ciao mondo', 'response')
   }
 })
 
-test('config reloads from a written file from a route', async ({ teardown, equal, pass, same }) => {
+test('config reloads from a written file from a route', async (t) => {
   const config = join(os.tmpdir(), `${process.pid}-3.json`)
   const file = join(os.tmpdir(), `${process.pid}-3.js`)
 
@@ -182,28 +184,28 @@ test('config reloads from a written file from a route', async ({ teardown, equal
 
   const app = await buildServer(config)
 
-  teardown(async () => {
+  t.after(async () => {
     await app.close()
   })
   await app.start()
 
   {
     const res = await request(`${app.url}/`)
-    equal(res.statusCode, 200, 'add status code')
-    same(await res.body.text(), 'hello', 'response')
+    assert.strictEqual(res.statusCode, 200, 'add status code')
+    assert.deepStrictEqual(await res.body.text(), 'hello', 'response')
   }
 
   {
     const res = await request(`${app.url}/restart`, {
       method: 'POST'
     })
-    equal(res.statusCode, 200, 'add status code')
+    assert.strictEqual(res.statusCode, 200, 'add status code')
   }
 
   {
     const res = await request(`${app.url}/`)
-    equal(res.statusCode, 200, 'add status code')
-    same(await res.body.text(), 'ciao mondo', 'response')
+    assert.strictEqual(res.statusCode, 200, 'add status code')
+    assert.deepStrictEqual(await res.body.text(), 'ciao mondo', 'response')
   }
 })
 
@@ -233,10 +235,10 @@ test('config is adjusted to handle custom loggers', async (t) => {
   })
 
   await buildServer(options)
-  t.equal(called, true)
+  assert.strictEqual(called, true)
 })
 
-test('config reloads', async ({ teardown, equal, pass, same }) => {
+test('config reloads', async (t) => {
   const file = join(os.tmpdir(), `${process.pid}-1.js`)
 
   await writeFile(file, `
@@ -260,15 +262,15 @@ test('config reloads', async ({ teardown, equal, pass, same }) => {
     metrics: false
   })
 
-  teardown(async () => {
+  t.after(async () => {
     await app.close()
   })
   await app.start()
 
   {
     const res = await request(`${app.url}/`)
-    equal(res.statusCode, 200, 'add status code')
-    same(await res.body.text(), 'hello', 'response')
+    assert.strictEqual(res.statusCode, 200, 'add status code')
+    assert.deepStrictEqual(await res.body.text(), 'hello', 'response')
   }
 
   await app.platformatic.configManager.update({
@@ -291,7 +293,73 @@ test('config reloads', async ({ teardown, equal, pass, same }) => {
 
   {
     const res = await request(`${app.url}/`)
-    equal(res.statusCode, 200, 'add status code')
-    same(await res.body.text(), 'ciao mondo', 'response')
+    assert.strictEqual(res.statusCode, 200, 'add status code')
+    assert.deepStrictEqual(await res.body.text(), 'ciao mondo', 'response')
   }
+})
+
+test('do not watch typescript outDir', async (t) => {
+  process.env.PLT_CLIENT_URL = 'http://localhost:3042'
+  const targetDir = join(__dirname, '..', 'fixtures', 'hello-client-ts')
+
+  try {
+    await rm(join(targetDir, 'dist'), { recursive: true })
+  } catch {}
+
+  const app = await buildServer(join(targetDir, 'platformatic.service.json'))
+  t.after(async () => {
+    await app.close()
+  })
+
+  assert.deepStrictEqual(app.platformatic.configManager.current.watch, {
+    enabled: false,
+    ignore: ['dist/**/*']
+  })
+})
+
+test('start without server config', async (t) => {
+  const app = await buildServer({
+    watch: false,
+    metrics: false
+  })
+  t.after(async () => {
+    await app.close()
+  })
+
+  const url = await app.start()
+  const res = await request(url)
+  assert.strictEqual(res.statusCode, 200, 'add status code')
+  assert.deepStrictEqual(await res.body.json(), {
+    message: 'Welcome to Platformatic! Please visit https://docs.platformatic.dev'
+  })
+})
+
+test('transport logger', async (t) => {
+  const file = join(os.tmpdir(), `${process.pid}-4.json`)
+  const options = {
+    server: {
+      hostname: '127.0.0.1',
+      port: 0,
+      logger: {
+        level: 'info',
+        transport: {
+          target: join(__dirname, 'fixtures', 'custom-transport.js'),
+          options: {
+            path: file
+          }
+        }
+      }
+    }
+  }
+
+  const server = await buildServer(options)
+  await server.start()
+  await server.close()
+
+  await sleep(500)
+
+  const written = await fs.readFile(file, 'utf8')
+  const parsed = JSON.parse(written)
+
+  assert.strictEqual(parsed.fromTransport, true)
 })

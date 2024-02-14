@@ -2,9 +2,16 @@
 
 const { singularize } = require('inflected')
 const camelcase = require('camelcase')
+const errors = require('./errors')
 
 function toUpperFirst (str) {
+  str = str.toString()
   return str[0].toUpperCase() + str.slice(1)
+}
+
+function toLowerFirst (str) {
+  str = str.toString()
+  return str.charAt(0).toLowerCase() + str.slice(1)
 }
 
 function toSingular (str) {
@@ -23,11 +30,11 @@ function sanitizeLimit (unsafeLimit, conf) {
   const max = conf?.max ?? 100
 
   if (limit > max) {
-    throw new Error(`Param limit=${limit} not allowed. Max accepted value ${max}.`)
+    throw new errors.ParamLimitNotAllowedError(limit, max)
   }
 
   if (limit < 0) {
-    throw new Error(`Param limit=${limit} not allowed. It must be not negative value.`)
+    throw new errors.ParamLimitMustBeNotNegativeError(limit)
   }
 
   return limit
@@ -45,6 +52,7 @@ function areSchemasSupported (sql) {
 module.exports = {
   toSingular,
   toUpperFirst,
+  toLowerFirst,
   sanitizeLimit,
   tableName,
   areSchemasSupported

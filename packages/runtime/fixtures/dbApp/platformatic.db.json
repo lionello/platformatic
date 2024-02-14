@@ -18,5 +18,11 @@
       "versions": true
     },
     "events": false
-  }
+  },
+  "plugins": {
+    "paths": [
+      "plugin.js"
+    ]
+  },
+  "watch": false
 }

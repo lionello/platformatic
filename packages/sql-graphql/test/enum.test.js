@@ -1,12 +1,13 @@
 'use strict'
 
-const { test } = require('tap')
+const { clear, connInfo, isSQLite, isPg } = require('./helper')
+const { test } = require('node:test')
+const { deepEqual: same, equal, ok: pass } = require('node:assert')
 const sqlGraphQL = require('..')
 const sqlMapper = require('@platformatic/sql-mapper')
 const fastify = require('fastify')
-const { clear, connInfo, isSQLite, isPg } = require('./helper')
 
-test('should properly setup the enum types', { skip: isSQLite }, async ({ pass, teardown, same }) => {
+test('should properly setup the enum types', { skip: isSQLite }, async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -36,7 +37,7 @@ test('should properly setup the enum types', { skip: isSQLite }, async ({ pass, 
   })
 
   app.register(sqlGraphQL)
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   try {
     await app.ready()
@@ -47,7 +48,48 @@ test('should properly setup the enum types', { skip: isSQLite }, async ({ pass, 
   }
 })
 
-test('should not fail if tables have duplicate enum names', { skip: isSQLite }, async ({ pass, teardown, same }) => {
+test('should not fail if enum value contains a space ', { skip: isSQLite }, async (t) => {
+  const app = fastify()
+  app.register(sqlMapper, {
+    ...connInfo,
+    async onDatabaseLoad (db, sql) {
+      pass('onDatabaseLoad called')
+
+      await clear(db, sql)
+
+      if (isPg) {
+        await db.query(sql`
+        CREATE TYPE custom_enum AS ENUM('Field 1', 'Field .', '. Field', ' f 1 ');
+
+        CREATE TABLE enum_tests (
+          id INTEGER NOT NULL,
+          test_enum custom_enum,
+          PRIMARY KEY (id)
+        );`)
+      } else {
+        await db.query(sql`
+        CREATE TABLE enum_tests (
+          id INTEGER NOT NULL,
+          test_enum ENUM ('Field 1', 'Field .', '. Field', ' f 1 ') DEFAULT NULL,
+          PRIMARY KEY (id)
+        );`)
+      }
+    }
+  })
+
+  app.register(sqlGraphQL)
+  t.after(() => app.close())
+
+  try {
+    await app.ready()
+    same(true, true, 'Enum with spaces are properly interpreted')
+  } catch (err) {
+    console.log(err)
+    same(true, false, 'Previous call should never fail')
+  }
+})
+
+test('should not fail if tables have duplicate enum names', { skip: isSQLite }, async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -88,7 +130,7 @@ test('should not fail if tables have duplicate enum names', { skip: isSQLite }, 
   })
 
   app.register(sqlGraphQL)
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   try {
     await app.ready()
@@ -99,7 +141,7 @@ test('should not fail if tables have duplicate enum names', { skip: isSQLite }, 
   }
 })
 
-test('should not fail if tables have enum with special characters', { skip: isSQLite }, async ({ pass, teardown, same, equal }) => {
+test('should not fail if tables have enum with special characters', { skip: isSQLite }, async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -131,7 +173,7 @@ test('should not fail if tables have enum with special characters', { skip: isSQ
   })
 
   app.register(sqlGraphQL)
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   try {
     await app.ready()

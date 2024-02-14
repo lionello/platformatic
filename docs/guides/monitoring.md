@@ -1,6 +1,6 @@
 # Monitoring with Prometheus and Grafana
 
-[Prometheus](https://auth0.com/) is open source system and alerting toolkit for monitoring and alerting. It's a time series database that collects metrics from configured targets at given intervals, evaluates rule expressions, displays the results, and can trigger alerts if some condition is observed to be true.
+[Prometheus](https://prometheus.io/) is open source system and alerting toolkit for monitoring and alerting. It's a time series database that collects metrics from configured targets at given intervals, evaluates rule expressions, displays the results, and can trigger alerts if some condition is observed to be true.
 [Grafana](https://grafana.com/oss/grafana/) is an open source visualization and analytics software. 
 
 It's a pretty common solution to use Prometheus to collect and store monitoring data, and Grafana to visualize it.
@@ -22,6 +22,22 @@ Platformatic can be configured to expose Prometheus metrics:
 In this case, we are exposing the metrics on port 9091 (defaults to `9090`), and we are using basic authentication to protect the endpoint.
 We can also specify the IP address to bind to (defaults to `0.0.0.0`). 
 Note that the metrics port is not the default in this configuration. This is because if you want to test the integration running both Prometheus and Platformatic on the same host, Prometheus starts on `9090` port too.
+
+Prometheus recommends using a port different from the main application port for serving the metrics. But, it is possible to serve metrics on the same port as the application by setting `"server": "parent"` in the `metrics` configuration. It is also possible to change the endpoint on which metrics are being served by passing the `endpoint` property. The following example configuration illustrates this:
+
+```json
+...
+  "metrics": {
+    "server": "parent",
+    "endpoint": "/platformatic-app-metrics",
+    "auth": {
+      "username": "platformatic",
+      "password": "mysecret"
+    }
+  }
+...
+```
+
 All the configuration settings are optional. To use the default settings, set `"metrics": true`. See the [configuration reference](/reference/db/configuration.md#metrics) for more details.
 
 :::caution

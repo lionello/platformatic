@@ -2,10 +2,12 @@
 
 const graphql = require('graphql')
 const camelcase = require('camelcase')
+const { findNearestString } = require('@platformatic/utils')
 const {
   sqlTypeToGraphQL,
   fromSelectionSet
 } = require('./utils')
+const errors = require('./errors')
 
 const ascDesc = new graphql.GraphQLEnumType({
   name: 'OrderByDirection',
@@ -36,6 +38,19 @@ function constructGraph (app, entity, opts, ignore) {
     loaders
   } = opts
 
+  const entityFieldsNames = Object.values(entity.fields)
+    .map(field => field.camelcase)
+
+  for (const ignoredField of Object.keys(ignore)) {
+    if (!entityFieldsNames.includes(ignoredField)) {
+      const nearestField = findNearestString(entityFieldsNames, ignoredField)
+      app.log.warn(
+      `Ignored graphql field "${ignoredField}" not found in entity "${entity.singularName}".` +
+      ` Did you mean "${nearestField}"?`
+      )
+    }
+  }
+
   const fields = {}
 
   for (const key of Object.keys(entity.fields)) {
@@ -47,10 +62,14 @@ function constructGraph (app, entity, opts, ignore) {
     const meta = { field }
 
     // sqlite doesn't support enums
+    // PG does support Arrays as columns
     /* istanbul ignore next */
-    if (field.enum) {
+    if (field.isArray) {
+      const listType = sqlTypeToGraphQL(field.sqlType)
+      meta.type = new graphql.GraphQLList(listType)
+    } else if (field.enum) {
       const enumValues = field.enum.reduce((acc, enumValue, index) => {
-        let key = enumValue.replace(/[^\w\s]/g, '_')
+        let key = enumValue.replace(/[^\w]/g, '_')
 
         const keyStartsWithLetterOrUnderscore = !!key.match(/^[_a-zA-Z]/g)
         if (!keyStartsWithLetterOrUnderscore) {
@@ -69,7 +88,7 @@ function constructGraph (app, entity, opts, ignore) {
         meta.type = new graphql.GraphQLEnumType({ name, values: enumValues })
       } catch (error) {
         app.log.error({ key, enumValues, entityName, table: entity.table, schema: entity.schema })
-        throw new Error('Unable to generate GraphQLEnumType')
+        throw new errors.UnableToGenerateGraphQLEnumTypeError()
       }
     } else {
       meta.type = sqlTypeToGraphQL(field.sqlType)
@@ -100,20 +119,33 @@ function constructGraph (app, entity, opts, ignore) {
   }).flat())].join('_'))
 
   const whereFields = Object.keys(fields).reduce((acc, field) => {
+    let graphqlFields
+    /* istanbul ignore else */
+    if (!fields[field].field.isArray) {
+      graphqlFields = {
+        eq: { type: fields[field].type },
+        neq: { type: fields[field].type },
+        gt: { type: fields[field].type },
+        gte: { type: fields[field].type },
+        lt: { type: fields[field].type },
+        lte: { type: fields[field].type },
+        like: { type: fields[field].type },
+        in: { type: new graphql.GraphQLList(fields[field].type) },
+        nin: { type: new graphql.GraphQLList(fields[field].type) }
+      }
+    } else {
+      graphqlFields = {
+        any: { type: fields[field].type.ofType },
+        all: { type: fields[field].type.ofType },
+        contains: { type: new graphql.GraphQLList(fields[field].type) },
+        contained: { type: new graphql.GraphQLList(fields[field].type) },
+        overlaps: { type: new graphql.GraphQLList(fields[field].type) }
+      }
+    }
     acc[field] = {
       type: new graphql.GraphQLInputObjectType({
         name: `${entityName}WhereArguments${field}`,
-        fields: {
-          eq: { type: fields[field].type },
-          neq: { type: fields[field].type },
-          gt: { type: fields[field].type },
-          gte: { type: fields[field].type },
-          lt: { type: fields[field].type },
-          lte: { type: fields[field].type },
-          like: { type: fields[field].type },
-          in: { type: new graphql.GraphQLList(fields[field].type) },
-          nin: { type: new graphql.GraphQLList(fields[field].type) }
-        }
+        fields: graphqlFields
       })
     }
     return acc
@@ -163,8 +195,11 @@ function constructGraph (app, entity, opts, ignore) {
   const orderByFields = new graphql.GraphQLEnumType({
     name: `${entityName}OrderByField`,
     values: Object.keys(fields).reduce((acc, field) => {
-      acc[field] = {
-        value: field
+      /* istanbul ignore else */
+      if (!fields[field].isArray) {
+        acc[field] = {
+          value: field
+        }
       }
       return acc
     }, {})

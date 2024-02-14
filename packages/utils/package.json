@@ -1,10 +1,10 @@
 {
   "name": "@platformatic/utils",
-  "version": "0.27.0",
+  "version": "1.21.1",
   "description": "Platformatic DB Utils",
   "main": "index.js",
   "scripts": {
-    "test": "standard | snazzy && c8 --100 tap --no-coverage test/*test.js",
+    "test": "npm run lint && borp --coverage",
     "lint": "standard | snazzy"
   },
   "repository": {
@@ -18,13 +18,17 @@
   },
   "homepage": "https://github.com/platformatic/platformatic#readme",
   "devDependencies": {
-    "c8": "^8.0.0",
+    "@matteo.collina/tspl": "^0.1.1",
+    "borp": "^0.9.0",
+    "fastify": "^4.26.0",
     "snazzy": "^9.0.0",
-    "standard": "^17.1.0",
-    "tap": "^16.3.6"
+    "standard": "^17.1.0"
   },
   "dependencies": {
     "@fastify/deepmerge": "^1.3.0",
-    "minimatch": "^8.0.4"
+    "@fastify/error": "^3.4.1",
+    "leven": "~3.1.0",
+    "minimatch": "^8.0.4",
+    "undici": "^6.6.0"
   }
 }

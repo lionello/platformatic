@@ -11,24 +11,33 @@ function generateArgs (entity, ignore) {
     }
     const field = entity.fields[name]
     const baseKey = `where.${field.camelcase}.`
-    for (const modifier of ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'like']) {
-      const key = baseKey + modifier
-      acc[key] = { type: mapSQLTypeToOpenAPIType(field.sqlType), enum: field.enum }
-    }
+    /* istanbul ignore next */
+    if (field.isArray) {
+      for (const modifier of ['all', 'any']) {
+        const key = baseKey + modifier
+        acc[key] = { type: mapSQLTypeToOpenAPIType(field.sqlType) }
+      }
+    } else {
+      for (const modifier of ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'like']) {
+        const key = baseKey + modifier
+        acc[key] = { type: mapSQLTypeToOpenAPIType(field.sqlType), enum: field.enum }
+      }
 
-    for (const modifier of ['in', 'nin']) {
-      const key = baseKey + modifier
-      acc[key] = { type: 'string' }
+      for (const modifier of ['in', 'nin', 'contains', 'contained', 'overlaps']) {
+        const key = baseKey + modifier
+        acc[key] = { type: 'string' }
+      }
     }
 
     return acc
   }, {})
 
   const orderByArgs = sortedEntityFields.reduce((acc, name) => {
-    if (ignore[name]) {
+    const field = entity.fields[name]
+
+    if (ignore[name] || field.isArray) {
       return acc
     }
-    const field = entity.fields[name]
     const key = `orderby.${field.camelcase}`
     acc[key] = { type: 'string', enum: ['asc', 'desc'] }
     return acc
@@ -52,10 +61,13 @@ function generateArgs (entity, ignore) {
 
 module.exports.generateArgs = generateArgs
 
-function rootEntityRoutes (app, entity, whereArgs, orderByArgs, entityLinks, entitySchema, fields) {
+function rootEntityRoutes (app, entity, whereArgs, orderByArgs, entityLinks, entitySchema, fields, entitySchemaInput) {
   app.get('/', {
     schema: {
       operationId: 'get' + capitalize(entity.pluralName),
+      summary: `Get ${entity.pluralName}.`,
+      description: `Fetch ${entity.pluralName} from the database.`,
+      tags: [entity.table],
       querystring: {
         type: 'object',
         properties: {
@@ -101,7 +113,7 @@ function rootEntityRoutes (app, entity, whereArgs, orderByArgs, entityLinks, ent
             // TODO handle escaping of ,
             v = v.split(',')
             /* istanbul ignore next */
-            if (mapSQLTypeToOpenAPIType(entity.fields[field].sqlType) === 'integer') {
+            if (mapSQLTypeToOpenAPIType(entity.camelCasedFields[field].sqlType) === 'integer') {
               v = v.map((v) => parseInt(v))
             }
           }
@@ -119,7 +131,7 @@ function rootEntityRoutes (app, entity, whereArgs, orderByArgs, entityLinks, ent
         if (modifier === 'in' || modifier === 'nin') {
           // TODO handle escaping of ,
           value = query[key].split(',')
-          if (mapSQLTypeToOpenAPIType(entity.fields[field].sqlType) === 'integer') {
+          if (mapSQLTypeToOpenAPIType(entity.camelCasedFields[field].sqlType) === 'integer') {
             value = value.map((v) => parseInt(v))
           }
         }
@@ -151,7 +163,10 @@ function rootEntityRoutes (app, entity, whereArgs, orderByArgs, entityLinks, ent
   app.post('/', {
     schema: {
       operationId: 'create' + capitalize(entity.singularName),
-      body: entitySchema,
+      summary: `Create ${entity.singularName}.`,
+      description: `Add new ${entity.singularName} to the database.`,
+      body: entitySchemaInput,
+      tags: [entity.table],
       response: {
         200: entitySchema
       }
@@ -169,7 +184,10 @@ function rootEntityRoutes (app, entity, whereArgs, orderByArgs, entityLinks, ent
   app.put('/', {
     schema: {
       operationId: 'update' + capitalize(entity.pluralName),
-      body: entitySchema,
+      summary: `Update ${entity.pluralName}.`,
+      description: `Update one or more ${entity.pluralName} in the database.`,
+      body: entitySchemaInput,
+      tags: [entity.table],
       querystring: {
         type: 'object',
         properties: {
@@ -203,7 +221,7 @@ function rootEntityRoutes (app, entity, whereArgs, orderByArgs, entityLinks, ent
           if (modifier === 'in' || modifier === 'nin') {
             // TODO handle escaping of ,
             value = query[key].split(',')
-            if (mapSQLTypeToOpenAPIType(entity.fields[field].sqlType) === 'integer') {
+            if (mapSQLTypeToOpenAPIType(entity.camelCasedFields[field].sqlType) === 'integer') {
               value = value.map((v) => parseInt(v))
             }
           }

@@ -1,10 +1,11 @@
 'use strict'
 
-const { test } = require('tap')
+const { clear, connInfo, isSQLite, isMysql } = require('./helper')
+const { test } = require('node:test')
+const { equal, ok: pass, notEqual: not } = require('node:assert/strict')
 const sqlGraphQL = require('..')
 const sqlMapper = require('@platformatic/sql-mapper')
 const fastify = require('fastify')
-const { clear, connInfo, isSQLite, isMysql } = require('./helper')
 const { setTimeout } = require('timers/promises')
 
 async function createBasicPages (db, sql) {
@@ -32,7 +33,7 @@ async function createBasicPages (db, sql) {
   }
 }
 
-test('created_at updated_at happy path', async ({ pass, teardown, same, equal, not, comment }) => {
+test('created_at updated_at happy path', async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -44,7 +45,7 @@ test('created_at updated_at happy path', async ({ pass, teardown, same, equal, n
     }
   })
   app.register(sqlGraphQL)
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   await app.ready()
 
@@ -71,8 +72,6 @@ test('created_at updated_at happy path', async ({ pass, teardown, same, equal, n
     const data = res.json().data
     not(data.savePage.createdAt, null, 'createdAt')
     not(data.savePage.updatedAt, null, 'updatedAt')
-    comment(`createdAt: ${data.savePage.createdAt}`)
-    comment(`updatedAt: ${data.savePage.updatedAt}`)
     original = data.savePage
   }
 
@@ -97,8 +96,6 @@ test('created_at updated_at happy path', async ({ pass, teardown, same, equal, n
     const data = res.json().data
     equal(data.getPageById.createdAt, original.createdAt, 'createdAt')
     equal(data.getPageById.updatedAt, original.updatedAt, 'updatedAt')
-    comment(`createdAt: ${data.getPageById.createdAt}`)
-    comment(`updatedAt: ${data.getPageById.updatedAt}`)
   }
 
   await setTimeout(1000) // await 1s
@@ -125,8 +122,6 @@ test('created_at updated_at happy path', async ({ pass, teardown, same, equal, n
     equal(data.savePage.createdAt, original.createdAt, 'createdAt')
     not(data.savePage.updatedAt, original.updatedAt, 'updatedAt')
     updated = data.savePage
-    comment(`createdAt: ${data.savePage.createdAt}`)
-    comment(`updatedAt: ${data.savePage.updatedAt}`)
   }
 
   {
@@ -150,12 +145,10 @@ test('created_at updated_at happy path', async ({ pass, teardown, same, equal, n
     const data = res.json().data
     equal(data.getPageById.createdAt, updated.createdAt, 'createdAt')
     equal(data.getPageById.updatedAt, updated.updatedAt, 'updatedAt')
-    comment(`createdAt: ${data.getPageById.createdAt}`)
-    comment(`updatedAt: ${data.getPageById.updatedAt}`)
   }
 })
 
-test('cannot set created_at', async ({ pass, teardown, same, equal, not, comment }) => {
+test('cannot set created_at', async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -167,7 +160,7 @@ test('cannot set created_at', async ({ pass, teardown, same, equal, not, comment
     }
   })
   app.register(sqlGraphQL)
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   await app.ready()
 
@@ -194,7 +187,7 @@ test('cannot set created_at', async ({ pass, teardown, same, equal, not, comment
   }
 })
 
-test('cannot set updated_at', async ({ pass, teardown, same, equal, not, comment }) => {
+test('cannot set updated_at', async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -206,7 +199,7 @@ test('cannot set updated_at', async ({ pass, teardown, same, equal, not, comment
     }
   })
   app.register(sqlGraphQL)
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   await app.ready()
 
@@ -231,8 +224,6 @@ test('cannot set updated_at', async ({ pass, teardown, same, equal, not, comment
     const data = res.json().data
     not(data.savePage.createdAt, null, 'createdAt')
     not(data.savePage.updatedAt, null, 'updatedAt')
-    comment(`createdAt: ${data.savePage.createdAt}`)
-    comment(`updatedAt: ${data.savePage.updatedAt}`)
   }
 
   {
@@ -258,7 +249,7 @@ test('cannot set updated_at', async ({ pass, teardown, same, equal, not, comment
   }
 })
 
-test('do not assign created_at updated_at', async ({ pass, teardown, same, equal, not, comment }) => {
+test('do not assign created_at updated_at', async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -271,7 +262,7 @@ test('do not assign created_at updated_at', async ({ pass, teardown, same, equal
     }
   })
   app.register(sqlGraphQL)
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   await app.ready()
 
@@ -367,7 +358,7 @@ test('do not assign created_at updated_at', async ({ pass, teardown, same, equal
   }
 })
 
-test('bulk insert adds created_at updated_at', async ({ pass, teardown, same, equal, not, comment }) => {
+test('bulk insert adds created_at updated_at', async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -379,7 +370,7 @@ test('bulk insert adds created_at updated_at', async ({ pass, teardown, same, eq
     }
   })
   app.register(sqlGraphQL)
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   await app.ready()
 
@@ -466,7 +457,7 @@ test('bulk insert adds created_at updated_at', async ({ pass, teardown, same, eq
   }
 })
 
-test('bulk insert with autoTimestamp=false do not had created_at updated_at', async ({ pass, teardown, same, equal, not, comment }) => {
+test('bulk insert with autoTimestamp=false do not had created_at updated_at', async (t) => {
   const app = fastify()
   app.register(sqlMapper, {
     ...connInfo,
@@ -479,7 +470,7 @@ test('bulk insert with autoTimestamp=false do not had created_at updated_at', as
     }
   })
   app.register(sqlGraphQL)
-  teardown(app.close.bind(app))
+  t.after(() => app.close())
 
   await app.ready()
 

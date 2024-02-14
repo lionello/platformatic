@@ -1,9 +1,11 @@
 'use strict'
 const { readFile, readdir } = require('node:fs/promises')
-const { basename, join, resolve: pathResolve } = require('node:path')
+const { join, resolve: pathResolve } = require('node:path')
+const { closest } = require('fastest-levenshtein')
 const Topo = require('@hapi/topo')
 const ConfigManager = require('@platformatic/config')
 const { schema } = require('./schema')
+const errors = require('./errors')
 
 async function _transformConfig (configManager) {
   const config = configManager.current
@@ -26,17 +28,25 @@ async function _transformConfig (configManager) {
       const configFilename = mapping.config ?? await ConfigManager.findConfigFile(entryPath)
 
       if (typeof configFilename !== 'string') {
-        throw new Error(`no config file found for service '${id}'`)
+        throw new errors.NoConfigFileFoundError(id)
       }
 
       const config = join(entryPath, configFilename)
 
-      services.push({ id, config, path: entryPath })
+      const service = { id, config, path: entryPath, useHttp: !!mapping.useHttp }
+      const existingServiceId = services.findIndex(service => service.id === id)
+
+      if (existingServiceId !== -1) {
+        services[existingServiceId] = service
+      } else {
+        services.push(service)
+      }
     }
   }
 
   configManager.current.allowCycles = !!configManager.current.allowCycles
   configManager.current.serviceMap = new Map()
+  configManager.current.inspectorOptions = undefined
 
   let hasValidEntrypoint = false
 
@@ -59,7 +69,7 @@ async function _transformConfig (configManager) {
   }
 
   if (!hasValidEntrypoint) {
-    throw new Error(`invalid entrypoint: '${config.entrypoint}' does not exist`)
+    throw new errors.InvalidEntrypointError(config.entrypoint)
   }
 
   configManager.current.services = services
@@ -68,6 +78,15 @@ async function _transformConfig (configManager) {
   if (!configManager.current.allowCycles) {
     topologicalSort(configManager)
   }
+}
+
+function missingDependencyErrorMessage (clientName, service, configManager) {
+  const closestName = closest(clientName, [...configManager.current.serviceMap.keys()])
+  let errorMsg = `service '${service.id}' has unknown dependency: '${clientName}'.`
+  if (closestName) {
+    errorMsg += ` Did you mean '${closestName}'?`
+  }
+  return errorMsg
 }
 
 async function parseClientsAndComposer (configManager) {
@@ -84,32 +103,40 @@ async function parseClientsAndComposer (configManager) {
         const clientName = dep.id ?? ''
         const dependency = configManager.current.serviceMap.get(clientName)
 
-        if (dependency === undefined) {
-          /* c8 ignore next 2 */
-          throw new Error(`service '${service.id}' has unknown dependency: '${clientName}'`)
-        }
+        let isLocal = true
+        let clientUrl = null
 
-        dependency.dependents.push(service.id)
-
-        if (dep.origin) {
+        if (dep.origin !== undefined) {
           try {
-            await cm.replaceEnv(dep.origin)
+            clientUrl = await cm.replaceEnv(dep.origin)
+            isLocal = false
             /* c8 ignore next 4 */
           } catch (err) {
+            // The MissingValueError is an error coming from pupa: https://github.com/sindresorhus/pupa#missingvalueerror
+            // All other errors are simply rethrown.
             if (err.name !== 'MissingValueError') {
               throw err
             }
 
-            if (dep.origin === `{${err.key}}`) {
-              service.localServiceEnvVars.set(err.key, `http://${clientName}.plt.local`)
+            if (dependency !== undefined && dep.origin === `{${err.key}}`) {
+              clientUrl = `http://${clientName}.plt.local`
+              service.localServiceEnvVars.set(err.key, clientUrl)
             }
           }
         }
 
+        if (isLocal) {
+          if (dependency === undefined) {
+            throw new errors.MissingDependencyError(missingDependencyErrorMessage(clientName, service, configManager))
+          }
+          clientUrl = `http://${clientName}.plt.local`
+          dependency.dependents.push(service.id)
+        }
+
         service.dependencies.push({
           id: clientName,
-          url: `http://${clientName}.plt.local`,
-          local: true
+          url: clientUrl,
+          local: isLocal
         })
       }
     }
@@ -118,28 +145,48 @@ async function parseClientsAndComposer (configManager) {
       const promises = parsed.clients.map((client) => {
         // eslint-disable-next-line no-async-promise-executor
         return new Promise(async (resolve, reject) => {
+          let clientName = client.serviceId || ''
           let clientUrl
           let missingKey
+          let isLocal = false
 
-          try {
-            clientUrl = await cm.replaceEnv(client.url)
-            /* c8 ignore next 2 - unclear why c8 is unhappy here */
-          } catch (err) {
-            if (err.name !== 'MissingValueError') {
-              /* c8 ignore next 3 */
-              reject(err)
-              return
+          if (clientName === '' || client.url !== undefined) {
+            try {
+              clientUrl = await cm.replaceEnv(client.url)
+              /* c8 ignore next 2 - unclear why c8 is unhappy here */
+            } catch (err) {
+              if (err.name !== 'MissingValueError') {
+                /* c8 ignore next 3 */
+                reject(err)
+                return
+              }
+
+              missingKey = err.key
             }
-
-            missingKey = err.key
+            isLocal = missingKey && client.url === `{${missingKey}}`
+            /* c8 ignore next 3 */
+          } else {
+            /* c8 ignore next 2 */
+            isLocal = true
           }
 
-          const isLocal = missingKey && client.url === `{${missingKey}}`
-          const clientAbsolutePath = pathResolve(service.path, client.path)
-          const clientPackageJson = join(clientAbsolutePath, 'package.json')
-          const clientMetadata = JSON.parse(await readFile(clientPackageJson, 'utf8'))
           /* c8 ignore next 20 - unclear why c8 is unhappy for nearly 20 lines here */
-          const clientName = clientMetadata.name ?? ''
+          if (!clientName) {
+            try {
+              const clientAbsolutePath = pathResolve(service.path, client.path)
+              const clientPackageJson = join(clientAbsolutePath, 'package.json')
+              const clientMetadata = JSON.parse(await readFile(clientPackageJson, 'utf8'))
+              clientName = clientMetadata.name ?? ''
+            } catch (err) {
+              if (client.url !== undefined && client.name !== undefined) {
+                // We resolve because this is a remote client
+                resolve()
+              } else {
+                reject(err)
+              }
+              return
+            }
+          }
 
           if (clientUrl === undefined) {
             // Combine the service name with the client name to avoid collisions
@@ -156,10 +203,9 @@ async function parseClientsAndComposer (configManager) {
 
           const dependency = configManager.current.serviceMap.get(clientName)
 
+          /* c8 ignore next 4 */
           if (dependency === undefined) {
-            /* c8 ignore next 3 */
-            reject(new Error(`service '${service.id}' has unknown dependency: '${clientName}'`))
-            return
+            throw new errors.MissingDependencyError(missingDependencyErrorMessage(clientName, service, configManager))
           }
 
           dependency.dependents.push(service.id)
@@ -201,32 +247,114 @@ platformaticRuntime.configType = 'runtime'
 platformaticRuntime.configManagerConfig = {
   schema,
   allowToWatch: ['.env'],
+  schemaOptions: {
+    useDefaults: true,
+    coerceTypes: true,
+    allErrors: true,
+    strict: false
+  },
+  envWhitelist: ['DATABASE_URL', 'PORT', 'HOSTNAME'],
   async transformConfig () {
     await _transformConfig(this)
   }
 }
 
 async function wrapConfigInRuntimeConfig ({ configManager, args }) {
+  let serviceId = 'main'
+  try {
+    const packageJson = join(configManager.dirname, 'package.json')
+    serviceId = require(packageJson).name || 'main'
+    if (serviceId.startsWith('@')) {
+      serviceId = serviceId.split('/')[1]
+    }
+  } catch (err) {
+    // on purpose, the package.json might be missing
+  }
+
   /* c8 ignore next */
-  const id = basename(configManager.dirname) || 'main'
   const wrapperConfig = {
     $schema: schema.$id,
-    entrypoint: id,
+    entrypoint: serviceId,
     allowCycles: false,
     hotReload: true,
     services: [
       {
-        id,
+        id: serviceId,
         path: configManager.dirname,
         config: configManager.fullPath
       }
     ]
   }
-  const cm = new ConfigManager({ source: wrapperConfig, schema })
+  const cm = new ConfigManager({
+    source: wrapperConfig,
+    schema,
+    schemaOptions: {
+      useDefaults: true,
+      coerceTypes: true,
+      allErrors: true,
+      strict: false
+    },
+    transformConfig () { return _transformConfig(this) }
+  })
 
-  await _transformConfig(cm)
   await cm.parseAndValidate()
   return cm
 }
 
-module.exports = { platformaticRuntime, wrapConfigInRuntimeConfig }
+function parseInspectorOptions (configManager) {
+  const { current, args } = configManager
+  const hasInspect = 'inspect' in args
+  const hasInspectBrk = 'inspect-brk' in args
+  let inspectFlag
+
+  if (hasInspect) {
+    inspectFlag = args.inspect
+
+    if (hasInspectBrk) {
+      throw new errors.InspectAndInspectBrkError()
+    }
+  } else if (hasInspectBrk) {
+    inspectFlag = args['inspect-brk']
+  }
+
+  if (inspectFlag !== undefined) {
+    let host = '127.0.0.1'
+    let port = 9229
+
+    if (typeof inspectFlag === 'string' && inspectFlag.length > 0) {
+      const splitAt = inspectFlag.lastIndexOf(':')
+
+      if (splitAt === -1) {
+        port = inspectFlag
+      } else {
+        host = inspectFlag.substring(0, splitAt)
+        port = inspectFlag.substring(splitAt + 1)
+      }
+
+      port = Number.parseInt(port, 10)
+
+      if (!(port === 0 || (port >= 1024 && port <= 65535))) {
+        throw new errors.InspectorPortError()
+      }
+
+      if (!host) {
+        throw new errors.InspectorHostError()
+      }
+    }
+
+    current.inspectorOptions = {
+      host,
+      port,
+      breakFirstLine: hasInspectBrk,
+      hotReloadDisabled: !!current.hotReload
+    }
+
+    current.hotReload = false
+  }
+}
+
+module.exports = {
+  parseInspectorOptions,
+  platformaticRuntime,
+  wrapConfigInRuntimeConfig
+}

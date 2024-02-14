@@ -1,24 +1,66 @@
-import { expectError, expectType } from 'tsd';
-import { FastifyInstance } from 'fastify';
-import { pltServiceHandlerBuildServer } from '.';
+import { expectType } from 'tsd'
+import { FastifyInstance } from 'fastify'
+import ConfigManager from '@platformatic/config'
+import { OpenAPI } from 'openapi-types'
+import type { MercuriusPlugin } from 'mercurius'
+import { PlatformaticService } from './config'
+import { BaseGenerator } from '@platformatic/generators'
+import {
+  start,
+  buildServer,
+  PlatformaticApp,
+  platformaticService,
+  Stackable,
+  Generator,
+  PlatformaticServiceConfig
+} from '.'
 
-const server: pltServiceHandlerBuildServer = {
-  app: {} as FastifyInstance,
-  address: 'localhost',
-  port: 3000,
-  restart: async () => {},
-  listen: async () => '',
-  close: (async () => undefined) as unknown as FastifyInstance['close'],
-  inject: (async () => undefined) as unknown as FastifyInstance['inject']
-};
+declare module 'fastify' {
+  interface FastifyInstance {
+    platformatic: PlatformaticApp<PlatformaticService>
+  }
+}
 
-expectType<pltServiceHandlerBuildServer>(server);
-expectError<pltServiceHandlerBuildServer>({...server, app: 'WRONG' });
-expectError<pltServiceHandlerBuildServer>({...server, address: 42 });
-expectError<pltServiceHandlerBuildServer>({...server, port: 'WRONG' });
-expectError<pltServiceHandlerBuildServer>({...server, restart: 'WRONG' });
-expectError<pltServiceHandlerBuildServer>({...server, listen: 'WRONG' });
-expectError<pltServiceHandlerBuildServer>({...server, listen: async () => ({ address: 42, port: 3000 }), });
-expectError<pltServiceHandlerBuildServer>({...server, listen: async () => ({ address: 'localhost', port: 'WRONG' }), });
-expectError<pltServiceHandlerBuildServer>({...server, stop: 'WRONG' });
-expectError<pltServiceHandlerBuildServer>({...server, inject: 'WRONG' });
+const server = await buildServer({})
+
+expectType<FastifyInstance>(server)
+expectType<ConfigManager<PlatformaticService>>(server.platformatic.configManager)
+expectType<PlatformaticService>(server.platformatic.configManager.current)
+expectType<PlatformaticService>(server.platformatic.config)
+expectType<OpenAPI.Document>(server.swagger())
+expectType<MercuriusPlugin>(server.graphql)
+expectType<Promise<void>>(server.restart())
+
+function buildStackable (): Stackable<PlatformaticServiceConfig> {
+  async function myApp (app: FastifyInstance, opts: object): Promise<void> {
+    await platformaticService(app, opts)
+  }
+
+  myApp.schema = platformaticService.configManagerConfig.schema
+  myApp.configType = 'myApp'
+  myApp.configManagerConfig = {
+    ...platformaticService.configManagerConfig,
+    async transformConfig (this: ConfigManager<PlatformaticServiceConfig>) {
+      this.current.plugins = {
+        paths: [{
+          path: 'my-plugin'
+        }]
+      }
+    }
+  }
+
+  await start(myApp, ['--help'])
+
+  return myApp
+}
+
+expectType<Stackable<PlatformaticServiceConfig>>(buildStackable())
+
+const generator = new Generator()
+expectType<Generator>(generator)
+
+class MyGenerator extends Generator {}
+const myGenerator = new MyGenerator()
+
+expectType<MyGenerator>(myGenerator)
+expectType<BaseGenerator.BaseGeneratorConfig>(myGenerator.config)
